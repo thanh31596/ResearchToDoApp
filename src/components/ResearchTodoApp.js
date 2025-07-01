@@ -1,8 +1,67 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
+import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame, Leaf, Zap, LogOut, User } from 'lucide-react';
 import apiService from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+
+// Confetti Component
+const Confetti = ({ active, onComplete }) => {
+    useEffect(() => {
+        if (active) {
+            const timer = setTimeout(onComplete, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [active, onComplete]);
+
+    if (!active) return null;
+
+    return (
+        <div className="fixed inset-0 pointer-events-none z-50">
+            {[...Array(50)].map((_, i) => (
+                <div
+                    key={i}
+                    className="absolute animate-bounce"
+                    style={{
+                        left: `${Math.random() * 100}%`,
+                        top: `${Math.random() * 100}%`,
+                        animationDelay: `${Math.random() * 2}s`,
+                        animationDuration: `${2 + Math.random() * 2}s`
+                    }}
+                >
+                    {['🎉', '✨', '🌟', '🎊', '💫'][Math.floor(Math.random() * 5)]}
+                </div>
+            ))}
+        </div>
+    );
+};
+
+// DNA Loader Component
+const DNALoader = () => (
+    <div className="flex items-center justify-center">
+        <div className="relative w-12 h-12">
+            <div className="absolute inset-0 border-4 border-transparent border-t-purple-500 border-r-pink-500 rounded-full animate-spin"></div>
+            <div className="absolute inset-2 border-4 border-transparent border-b-blue-500 border-l-green-500 rounded-full animate-spin animate-reverse"></div>
+            <div className="absolute inset-4 border-2 border-transparent border-t-yellow-500 rounded-full animate-spin"></div>
+        </div>
+    </div>
+);
+
+// Liquid Progress Bar Component
+const LiquidProgressBar = ({ progress, className = "", colors = "from-purple-500 to-pink-500" }) => (
+    <div className={`relative h-3 bg-gray-200 rounded-full overflow-hidden ${className}`}>
+        <div
+            className={`absolute inset-0 bg-gradient-to-r ${colors} rounded-full transition-all duration-1000 ease-out transform`}
+            style={{ width: `${progress}%` }}
+        >
+            <div className="absolute inset-0 bg-gradient-to-r from-white/30 to-transparent animate-pulse"></div>
+            <div className="absolute top-0 left-0 w-full h-full">
+                <div className="h-full bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse"></div>
+            </div>
+        </div>
+    </div>
+);
 
 const ResearchTodoApp = () => {
+    const { user, logout } = useAuth();
     const [currentView, setCurrentView] = useState('daily');
     const [showCreateTask, setShowCreateTask] = useState(false);
     const [newTaskInput, setNewTaskInput] = useState('');
@@ -21,11 +80,13 @@ const ResearchTodoApp = () => {
     const [tickets, setTickets] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [selectedPhase, setSelectedPhase] = useState(null); // For filtering tasks by phase
-    const [showAddTask, setShowAddTask] = useState(null); // For adding tasks to specific phases
+    const [selectedPhase, setSelectedPhase] = useState(null);
+    const [showAddTask, setShowAddTask] = useState(null);
     const [newTaskTitle, setNewTaskTitle] = useState('');
-    const [showAddPhase, setShowAddPhase] = useState(null); // For adding new phases
+    const [showAddPhase, setShowAddPhase] = useState(null);
     const [newPhaseName, setNewPhaseName] = useState('');
+    const [showConfetti, setShowConfetti] = useState(false);
+    const [showUserMenu, setShowUserMenu] = useState(false);
 
     const [chatMessages, setChatMessages] = useState([
         { role: 'assistant', content: 'Hello! I\'m your AI research assistant. I can help you create detailed project plans. Try describing a research task or project you\'d like to work on!' }
@@ -50,6 +111,20 @@ const ResearchTodoApp = () => {
             }
         };
     }, [timerInterval]);
+
+    // Close user menu when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (showUserMenu && !event.target.closest('.user-menu-container')) {
+                setShowUserMenu(false);
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [showUserMenu]);
 
     // Load tickets from backend
     const loadTickets = async () => {
@@ -220,6 +295,12 @@ const ResearchTodoApp = () => {
                         task.id === taskId ? { ...task, completed: !task.completed } : task
                     );
 
+                    // Show confetti when completing a task
+                    const completingTask = ticket.plan.tasks.find(task => task.id === taskId);
+                    if (completingTask && !completingTask.completed) {
+                        setShowConfetti(true);
+                    }
+
                     // Check for phase completion before updating
                     const previousPhases = [...ticket.plan.phases];
 
@@ -237,7 +318,7 @@ const ResearchTodoApp = () => {
 
                     // Check if any new phases were completed
                     const newlyCompletedPhases = updatedPhases.filter((phase, index) =>
-                        !previousPhases[index].completed && phase.completed
+                        !previousPhases[index]?.completed && phase.completed
                     );
 
                     // Auto-generate next tasks when phase is completed
@@ -473,7 +554,7 @@ const ResearchTodoApp = () => {
         setEditingTicket(null);
     };
 
-    // Chat with AI (this can still use direct Gemini or you can create a backend endpoint for it)
+    // Chat with AI
     const handleChatSubmit = async () => {
         if (!chatInput.trim()) return;
 
@@ -483,7 +564,6 @@ const ResearchTodoApp = () => {
         setIsProcessing(true);
 
         try {
-            // You could create a backend endpoint for chat or keep using direct Gemini
             const GEMINI_API_KEY = "AIzaSyB_S8LYf2-YUD9ssMXqe9FzeWaqYEE90FI";
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
                 method: 'POST',
@@ -521,7 +601,7 @@ Respond with a helpful message (not JSON this time).`
         setIsProcessing(false);
     };
 
-    // Helper functions (keep your existing helper functions)
+    // Helper functions
     const getDaysInMonth = (date) => {
         const year = date.getFullYear();
         const month = date.getMonth();
@@ -759,13 +839,33 @@ Respond with a helpful message (not JSON this time).`
         return Object.values(timeSpent).reduce((total, time) => total + time, 0);
     };
 
+    const getPriorityIcon = (priority) => {
+        switch (priority) {
+            case 'High': return <Flame className="w-4 h-4 text-red-500" />;
+            case 'Medium': return <Zap className="w-4 h-4 text-yellow-500" />;
+            case 'Low': return <Leaf className="w-4 h-4 text-green-500" />;
+            default: return null;
+        }
+    };
+
     const getPriorityColor = (priority) => {
         switch (priority) {
-            case 'High': return 'bg-red-100 text-red-800 border-red-200';
-            case 'Medium': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-            case 'Low': return 'bg-green-100 text-green-800 border-green-200';
-            default: return 'bg-gray-100 text-gray-800 border-gray-200';
+            case 'High': return 'from-red-400 to-red-600 shadow-red-200';
+            case 'Medium': return 'from-yellow-400 to-orange-500 shadow-yellow-200';
+            case 'Low': return 'from-green-400 to-emerald-500 shadow-green-200';
+            default: return 'from-gray-400 to-gray-600 shadow-gray-200';
         }
+    };
+
+    const getPhaseColor = (phaseName, index) => {
+        const colors = [
+            'from-blue-400 to-indigo-500',
+            'from-purple-400 to-violet-500',
+            'from-pink-400 to-rose-500',
+            'from-emerald-400 to-teal-500',
+            'from-amber-400 to-orange-500'
+        ];
+        return colors[index % colors.length];
     };
 
     const getStatusColor = (status) => {
@@ -780,10 +880,10 @@ Respond with a helpful message (not JSON this time).`
     // Show loading state
     if (loading) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 flex items-center justify-center">
+            <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 flex items-center justify-center">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto"></div>
-                    <p className="text-gray-600 mt-4">Loading your research projects...</p>
+                    <DNALoader />
+                    <p className="text-gray-600 mt-4 animate-pulse">Loading your research projects...</p>
                 </div>
             </div>
         );
@@ -792,12 +892,12 @@ Respond with a helpful message (not JSON this time).`
     // Show error state
     if (error) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 flex items-center justify-center">
-                <div className="text-center">
+            <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 flex items-center justify-center">
+                <div className="text-center bg-white/70 backdrop-blur-sm rounded-2xl p-8 shadow-lg border border-white/30">
                     <p className="text-red-600 mb-4">{error}</p>
                     <button
                         onClick={loadTickets}
-                        className="bg-purple-400 text-white px-4 py-2 rounded-lg hover:bg-purple-500 transition-colors"
+                        className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-xl hover:shadow-lg transform hover:scale-105 transition-all duration-300"
                     >
                         Retry
                     </button>
@@ -809,31 +909,51 @@ Respond with a helpful message (not JSON this time).`
     // Get today's focus tasks using smart logic
     const todaysFocusTasks = getTodaysFocusTasks();
 
-    // Your existing JSX rendering code goes here - I'll include the main structure
     return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50" style={{ fontFamily: 'Helvetica, Arial, sans-serif' }}>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 relative overflow-hidden">
+            {/* Animated Background Particles */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                {[...Array(20)].map((_, i) => (
+                    <div
+                        key={i}
+                        className="absolute w-2 h-2 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full opacity-20 animate-float"
+                        style={{
+                            left: `${Math.random() * 100}%`,
+                            top: `${Math.random() * 100}%`,
+                            animationDelay: `${Math.random() * 10}s`,
+                            animationDuration: `${5 + Math.random() * 5}s`
+                        }}
+                    />
+                ))}
+            </div>
+
+            {/* Confetti */}
+            <Confetti active={showConfetti} onComplete={() => setShowConfetti(false)} />
+
             {/* Header */}
-            <header className="bg-white/80 backdrop-blur-sm border-b border-purple-100 sticky top-0 z-40">
+            <header className="bg-white/80 backdrop-blur-lg border-b border-purple-100 sticky top-0 z-40 shadow-lg">
                 <div className="max-w-7xl mx-auto px-6 py-4">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-3">
-                            <div className="bg-gradient-to-r from-purple-400 to-pink-400 p-2 rounded-xl">
-                                <Brain className="w-6 h-6 text-white" />
+                            <div className="bg-gradient-to-br from-purple-500 to-pink-500 p-3 rounded-2xl shadow-lg transform hover:scale-110 transition-all duration-300">
+                                <Brain className="w-7 h-7 text-white animate-pulse" />
                             </div>
                             <div>
-                                <h1 className="text-xl font-bold text-gray-800">Research Assistant</h1>
-                                <p className="text-sm text-gray-600">AI-Powered Productivity</p>
+                                <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                    Stephen Assistant
+                                </h1>
+                                <p className="text-sm text-gray-600">AI-Powered Planning Tool For Stephen</p>
                             </div>
                         </div>
 
                         <div className="flex items-center space-x-4">
                             {activeTimer && (
-                                <div className="flex items-center space-x-2 bg-green-100 text-green-800 px-3 py-1 rounded-lg">
-                                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                                <div className="flex items-center space-x-2 bg-gradient-to-r from-green-100 to-emerald-100 text-green-800 px-4 py-2 rounded-xl shadow-lg animate-bounce">
+                                    <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
                                     <span className="text-sm font-medium">Timer Running</span>
                                     <button
                                         onClick={stopTimer}
-                                        className="text-green-600 hover:text-green-800 ml-1"
+                                        className="text-green-600 hover:text-green-800 ml-1 transform hover:scale-110 transition-all"
                                     >
                                         <X className="w-3 h-3" />
                                     </button>
@@ -842,13 +962,13 @@ Respond with a helpful message (not JSON this time).`
 
                             <button
                                 onClick={() => setShowCreateTask(true)}
-                                className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-4 py-2 rounded-xl font-medium hover:shadow-lg transition-all flex items-center space-x-2"
+                                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-purple-600 hover:to-pink-600"
                             >
-                                <Plus className="w-4 h-4" />
+                                <Plus className="w-5 h-5" />
                                 <span>Create Task</span>
                             </button>
 
-                            <nav className="flex space-x-1 bg-gray-100 rounded-xl p-1">
+                            <nav className="flex space-x-1 bg-white/70 backdrop-blur-sm rounded-2xl p-1 shadow-lg border border-white/30">
                                 {[
                                     { key: 'daily', label: 'Daily', icon: Clock },
                                     { key: 'calendar', label: 'Calendar', icon: Calendar },
@@ -858,10 +978,10 @@ Respond with a helpful message (not JSON this time).`
                                     <button
                                         key={key}
                                         onClick={() => setCurrentView(key)}
-                                        className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-all ${
+                                        className={`flex items-center space-x-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
                                             currentView === key
-                                                ? 'bg-white text-purple-600 shadow-sm'
-                                                : 'text-gray-600 hover:text-purple-600'
+                                                ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
+                                                : 'text-gray-600 hover:text-purple-600 hover:bg-white/50'
                                         }`}
                                     >
                                         <Icon className="w-4 h-4" />
@@ -869,6 +989,56 @@ Respond with a helpful message (not JSON this time).`
                                     </button>
                                 ))}
                             </nav>
+
+                            {/* User Menu */}
+                            <div className="relative user-menu-container">
+                                <button
+                                    onClick={() => setShowUserMenu(!showUserMenu)}
+                                    className="flex items-center space-x-2 bg-white/70 backdrop-blur-sm rounded-2xl p-3 shadow-lg border border-white/30 hover:bg-white/80 transition-all duration-300 transform hover:scale-105"
+                                >
+                                    <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-2 rounded-xl">
+                                        <User className="w-4 h-4 text-white" />
+                                    </div>
+                                    <span className="text-sm font-medium text-gray-700">
+                                        {user?.fullName || user?.email || 'User'}
+                                    </span>
+                                </button>
+
+                                {/* User Dropdown Menu */}
+                                {showUserMenu && (
+                                    <div className="absolute right-0 top-full mt-2 w-48 bg-white/90 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/50 py-2 z-50 animate-slide-up">
+                                        <div className="px-4 py-3 border-b border-gray-200">
+                                            <p className="text-sm font-medium text-gray-800">
+                                                {user?.fullName || 'Research User'}
+                                            </p>
+                                            <p className="text-xs text-gray-500">{user?.email}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => {
+                                                // Clear timer if running
+                                                if (timerInterval) {
+                                                    clearInterval(timerInterval);
+                                                    setTimerInterval(null);
+                                                }
+                                                if (activeTimer) {
+                                                    setActiveTimer(null);
+                                                }
+
+                                                // Clear the auth token and user state
+                                                apiService.removeToken();
+                                                logout();
+                                                setShowUserMenu(false);
+                                            }}
+                                            className="w-full flex items-center space-x-3 px-4 py-3 text-left hover:bg-red-50 transition-colors group"
+                                        >
+                                            <LogOut className="w-4 h-4 text-gray-400 group-hover:text-red-500 transition-colors" />
+                                            <span className="text-sm text-gray-700 group-hover:text-red-600 font-medium">
+                                                Sign out
+                                            </span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -876,53 +1046,80 @@ Respond with a helpful message (not JSON this time).`
 
             {/* Create Task Modal */}
             {showCreateTask && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-8 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-white/30 animate-slide-up">
                         <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-bold text-gray-800">Create New Research Task</h2>
+                            <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                Create New Research Task
+                            </h2>
                             <button
                                 onClick={() => setShowCreateTask(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                             >
                                 <X className="w-6 h-6" />
                             </button>
                         </div>
 
-                        <div className="space-y-4">
+                        <div className="space-y-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-3">
                                     Describe your research task or project
                                 </label>
                                 <textarea
                                     value={newTaskInput}
                                     onChange={(e) => setNewTaskInput(e.target.value)}
-                                    placeholder="e.g., 'I need to conduct a systematic review on machine learning applications in healthcare for my PhD thesis, due in 4 months'"
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
+                                    placeholder="e.g., 'I need to conduct a systematic review on recommendation systems for e-commerce applications, focusing on deep learning approaches'"
+                                    className="w-full px-4 py-4 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent resize-none backdrop-blur-sm bg-white/70"
                                     rows={4}
                                 />
                             </div>
 
-                            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                                <h3 className="font-semibold text-blue-800 mb-2">AI will create:</h3>
-                                <ul className="text-sm text-blue-700 space-y-1">
-                                    <li>• Comprehensive project breakdown with phases</li>
-                                    <li>• Detailed timeline with realistic deadlines</li>
-                                    <li>• Specific actionable tasks for each phase</li>
-                                    <li>• Progress tracking and milestones</li>
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6 backdrop-blur-sm">
+                                <h3 className="font-semibold text-blue-800 mb-3 flex items-center">
+                                    <Brain className="w-5 h-5 mr-2" />
+                                    AI will create:
+                                </h3>
+                                <ul className="text-sm text-blue-700 space-y-2">
+                                    <li className="flex items-center">
+                                        <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
+                                        Comprehensive project breakdown with phases
+                                    </li>
+                                    <li className="flex items-center">
+                                        <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
+                                        Detailed timeline with realistic deadlines
+                                    </li>
+                                    <li className="flex items-center">
+                                        <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
+                                        Specific actionable tasks for each phase
+                                    </li>
+                                    <li className="flex items-center">
+                                        <CheckCircle className="w-4 h-4 mr-2 text-green-600" />
+                                        Progress tracking and milestones
+                                    </li>
                                 </ul>
                             </div>
 
-                            <div className="flex space-x-3 pt-4">
+                            <div className="flex space-x-4 pt-4">
                                 <button
                                     onClick={handleCreateTaskSubmit}
                                     disabled={!newTaskInput.trim() || isGeneratingPlan}
-                                    className="flex-1 bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-3 rounded-xl font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-8 py-4 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center space-x-2"
                                 >
-                                    {isGeneratingPlan ? 'Generating Plan...' : 'Generate AI Plan'}
+                                    {isGeneratingPlan ? (
+                                        <>
+                                            <DNALoader />
+                                            <span>Generating Plan...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Brain className="w-5 h-5" />
+                                            <span>Generate AI Plan</span>
+                                        </>
+                                    )}
                                 </button>
                                 <button
                                     onClick={() => setShowCreateTask(false)}
-                                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all"
+                                    className="px-8 py-4 border border-gray-300 text-gray-700 rounded-2xl font-medium hover:bg-gray-50 transition-all duration-300 transform hover:scale-105"
                                 >
                                     Cancel
                                 </button>
@@ -932,33 +1129,36 @@ Respond with a helpful message (not JSON this time).`
                 </div>
             )}
 
-            {/* Main Content - Daily View */}
-            <main className="max-w-7xl mx-auto px-6 py-8">
+            {/* Main Content */}
+            <main className="max-w-7xl mx-auto px-6 py-8 relative z-10">
                 {currentView === 'daily' && (
                     <div className="space-y-8">
-                        <div className="bg-white rounded-2xl p-6 shadow-sm border border-purple-100">
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-2xl font-bold text-gray-800">Today's Focus</h2>
-                                <div className="text-sm text-gray-600">
+                        {/* Today's Focus */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30 transform hover:scale-[1.02] transition-all duration-300">
+                            <div className="flex items-center justify-between mb-8">
+                                <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                    Today's Focus
+                                </h2>
+                                <div className="text-sm text-gray-600 bg-white/50 px-4 py-2 rounded-xl">
                                     {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                                 </div>
                             </div>
 
-                            <div className="grid gap-4">
+                            <div className="grid gap-6">
                                 {todaysFocusTasks.length > 0 ? todaysFocusTasks.map(task => (
-                                    <div key={`${task.ticketId}-${task.id}`} className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-4 border border-blue-100">
+                                    <div key={`${task.ticketId}-${task.id}`} className="bg-gradient-to-br from-white/80 to-purple-50/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300">
                                         <div className="flex items-start justify-between">
                                             <div className="flex-1">
-                                                <div className="flex items-center space-x-3 mb-2">
+                                                <div className="flex items-center space-x-4 mb-3">
                                                     <button
                                                         onClick={() => toggleTaskComplete(task.ticketId, task.id)}
-                                                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                                                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-300 transform hover:scale-110 ${
                                                             task.completed
-                                                                ? 'bg-green-400 border-green-400'
-                                                                : 'border-gray-300 hover:border-purple-400'
+                                                                ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400 shadow-lg'
+                                                                : 'border-gray-300 hover:border-purple-400 hover:shadow-md'
                                                         }`}
                                                     >
-                                                        {task.completed && <CheckCircle className="w-3 h-3 text-white" />}
+                                                        {task.completed && <CheckCircle className="w-4 h-4 text-white" />}
                                                     </button>
                                                     {editingTask === `${task.ticketId}-${task.id}` ? (
                                                         <input
@@ -974,43 +1174,53 @@ Respond with a helpful message (not JSON this time).`
                                                             }}
                                                             onBlur={() => setEditingTask(null)}
                                                             onKeyPress={(e) => e.key === 'Enter' && setEditingTask(null)}
-                                                            className="font-semibold text-gray-800 border-b border-purple-300 focus:outline-none bg-transparent"
+                                                            className="font-semibold text-lg text-gray-800 border-b border-purple-300 focus:outline-none bg-transparent"
                                                             autoFocus
                                                         />
                                                     ) : (
                                                         <h3
-                                                            className={`font-semibold cursor-pointer hover:text-purple-600 transition-colors ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}
+                                                            className={`font-semibold text-lg cursor-pointer hover:text-purple-600 transition-colors ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}
                                                             onDoubleClick={() => setEditingTask(`${task.ticketId}-${task.id}`)}
                                                         >
                                                             {task.title}
                                                         </h3>
                                                     )}
+                                                    {getPriorityIcon(task.ticketPriority)}
                                                     {task.deadline === new Date().toISOString().split('T')[0] && (
-                                                        <span className="bg-orange-100 text-orange-800 text-xs px-2 py-1 rounded-full font-medium">Due Today</span>
+                                                        <span className="bg-gradient-to-r from-orange-400 to-red-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg animate-bounce">
+                                                            Due Today
+                                                        </span>
                                                     )}
                                                     {new Date(task.deadline) < new Date() && !task.completed && (
-                                                        <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-medium">Overdue</span>
+                                                        <span className="bg-gradient-to-r from-red-400 to-pink-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg animate-pulse">
+                                                            Overdue
+                                                        </span>
                                                     )}
                                                     {task.ticketPriority === 'High' && (
-                                                        <span className="bg-red-100 text-red-800 text-xs px-2 py-1 rounded-full font-medium">High Priority</span>
+                                                        <span className="bg-gradient-to-r from-red-400 to-pink-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg">
+                                                            High Priority
+                                                        </span>
                                                     )}
                                                 </div>
 
-                                                <div className="flex items-center space-x-4 text-sm text-gray-600 ml-8">
-                                                    <span className="text-purple-600 font-medium">{task.projectName}</span>
-                                                    <span>•</span>
-                                                    <span>Due: {task.deadline}</span>
+                                                <div className="flex items-center space-x-6 text-sm text-gray-600 ml-10">
+                                                    <span className="text-purple-600 font-medium bg-purple-100 px-3 py-1 rounded-full">
+                                                        {task.projectName}
+                                                    </span>
+                                                    <span className="flex items-center">
+                                                        <Calendar className="w-4 h-4 mr-1" />
+                                                        Due: {task.deadline}
+                                                    </span>
                                                     {timeSpent[`${task.ticketId}-${task.id}`] && (
-                                                        <>
-                                                            <span>•</span>
-                                                            <span className="text-blue-600">⏱️ {formatTime(timeSpent[`${task.ticketId}-${task.id}`])}</span>
-                                                        </>
+                                                        <span className="text-blue-600 flex items-center bg-blue-100 px-3 py-1 rounded-full">
+                                                            <Clock className="w-4 h-4 mr-1" />
+                                                            {formatTime(timeSpent[`${task.ticketId}-${task.id}`])}
+                                                        </span>
                                                     )}
                                                     {activeTimer?.taskId === task.id && activeTimer?.ticketId === task.ticketId && (
-                                                        <>
-                                                            <span>•</span>
-                                                            <span className="text-green-600 animate-pulse">🔴 Recording</span>
-                                                        </>
+                                                        <span className="text-green-600 animate-pulse flex items-center bg-green-100 px-3 py-1 rounded-full">
+                                                            🔴 Recording
+                                                        </span>
                                                     )}
                                                 </div>
                                             </div>
@@ -1018,102 +1228,118 @@ Respond with a helpful message (not JSON this time).`
                                                 {!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== task.ticketId) ? (
                                                     <button
                                                         onClick={() => startTimer(task.id, task.ticketId)}
-                                                        className="text-gray-400 hover:text-green-600 transition-colors"
+                                                        className="bg-gradient-to-r from-green-400 to-emerald-500 text-white p-3 rounded-xl hover:shadow-lg transform hover:scale-110 transition-all duration-300"
                                                         title="Start timer"
                                                     >
-                                                        <Clock className="w-4 h-4" />
+                                                        <Clock className="w-5 h-5" />
                                                     </button>
                                                 ) : (
                                                     <button
                                                         onClick={stopTimer}
-                                                        className="text-green-600 hover:text-red-600 transition-colors"
+                                                        className="bg-gradient-to-r from-red-400 to-pink-500 text-white p-3 rounded-xl hover:shadow-lg transform hover:scale-110 transition-all duration-300"
                                                         title="Stop timer"
                                                     >
-                                                        <X className="w-4 h-4" />
+                                                        <X className="w-5 h-5" />
                                                     </button>
                                                 )}
                                             </div>
                                         </div>
                                     </div>
                                 )) : (
-                                    <div className="text-center py-8">
-                                        <CheckCircle className="w-16 h-16 text-green-300 mx-auto mb-4" />
-                                        <h3 className="text-xl font-semibold text-gray-600 mb-2">All caught up!</h3>
-                                        <p className="text-gray-500">No urgent tasks for today. Great work!</p>
+                                    <div className="text-center py-12">
+                                        <div className="bg-gradient-to-r from-green-400 to-emerald-500 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl">
+                                            <CheckCircle className="w-12 h-12 text-white" />
+                                        </div>
+                                        <h3 className="text-2xl font-bold text-gray-700 mb-3">All caught up!</h3>
+                                        <p className="text-gray-500 text-lg">No urgent tasks for today. Great work! 🎉</p>
                                     </div>
                                 )}
                             </div>
                         </div>
 
                         {/* All Tickets */}
-                        <div className="bg-white rounded-2xl p-6 shadow-sm border border-purple-100">
-                            <h3 className="text-xl font-bold text-gray-800 mb-6">All Research Tickets</h3>
-                            <div className="space-y-4">
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
+                                All Research Projects
+                            </h3>
+                            <div className="space-y-6">
                                 {tickets.map(ticket => (
-                                    <div key={ticket.id} className="border border-gray-200 rounded-xl p-6 hover:shadow-md transition-all">
-                                        <div className="flex items-start justify-between mb-4">
+                                    <div key={ticket.id} className="bg-gradient-to-br from-white/80 to-blue-50/80 backdrop-blur-sm border border-white/50 rounded-2xl p-8 hover:shadow-2xl transform hover:scale-[1.01] transition-all duration-300">
+                                        <div className="flex items-start justify-between mb-6">
                                             <div className="flex-1">
-                                                <div className="flex items-center space-x-3 mb-2">
-                                                    <h3 className="text-lg font-bold text-gray-800">{ticket.title}</h3>
-                                                    <div className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(ticket.status)}`}>
+                                                <div className="flex items-center space-x-4 mb-3">
+                                                    <h3 className="text-2xl font-bold text-gray-800">{ticket.title}</h3>
+                                                    <div className={`px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${
+                                                        ticket.status === 'completed' ? 'from-green-400 to-emerald-500 text-white' :
+                                                            ticket.status === 'in-progress' ? 'from-blue-400 to-indigo-500 text-white' :
+                                                                'from-gray-400 to-gray-500 text-white'
+                                                    } shadow-lg`}>
                                                         {ticket.status}
                                                     </div>
-                                                    <div className={`px-2 py-1 rounded-full text-xs font-medium border ${getPriorityColor(ticket.priority)}`}>
+                                                    <div className={`px-3 py-1 rounded-full text-xs font-medium border-2 bg-gradient-to-r ${getPriorityColor(ticket.priority)} text-white shadow-lg`}>
                                                         {ticket.priority}
                                                     </div>
                                                 </div>
-                                                <p className="text-gray-600 mb-3">{ticket.description}</p>
-                                                <div className="flex items-center space-x-4 text-sm text-gray-500">
-                                                    <span>Created: {ticket.created}</span>
-                                                    <span>•</span>
-                                                    <span>Due: {ticket.deadline}</span>
-                                                    <span>•</span>
-                                                    <span>{ticket.estimatedHours}h estimated</span>
+                                                <p className="text-gray-600 mb-4 text-lg">{ticket.description}</p>
+                                                <div className="flex items-center space-x-6 text-sm text-gray-500">
+                                                    <span className="flex items-center">
+                                                        <Calendar className="w-4 h-4 mr-1" />
+                                                        Created: {ticket.created}
+                                                    </span>
+                                                    <span className="flex items-center">
+                                                        <Target className="w-4 h-4 mr-1" />
+                                                        Due: {ticket.deadline}
+                                                    </span>
+                                                    <span className="flex items-center">
+                                                        <Clock className="w-4 h-4 mr-1" />
+                                                        {ticket.estimatedHours}h estimated
+                                                    </span>
                                                 </div>
                                             </div>
-                                            <div className="flex items-center space-x-2">
+                                            <div className="flex items-center space-x-4">
                                                 <div className="text-right">
-                                                    <div className="text-2xl font-bold text-purple-600">{ticket.progress}%</div>
-                                                    <div className="text-xs text-gray-500">Complete</div>
+                                                    <div className="text-4xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                                        {ticket.progress}%
+                                                    </div>
+                                                    <div className="text-sm text-gray-500">Complete</div>
                                                 </div>
                                                 <button
                                                     onClick={() => setEditingTicket(ticket)}
-                                                    className="p-2 text-gray-400 hover:text-purple-600 transition-colors"
+                                                    className="p-3 text-gray-400 hover:text-purple-600 transform hover:scale-110 transition-all duration-300"
                                                 >
-                                                    <Edit className="w-4 h-4" />
+                                                    <Edit className="w-5 h-5" />
                                                 </button>
                                                 <button
                                                     onClick={() => deleteTicket(ticket.id)}
-                                                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                                                    className="p-3 text-gray-400 hover:text-red-600 transform hover:scale-110 transition-all duration-300"
                                                 >
-                                                    <Trash2 className="w-4 h-4" />
+                                                    <Trash2 className="w-5 h-5" />
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <div className="mb-4">
-                                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                                <div
-                                                    className="bg-gradient-to-r from-purple-400 to-pink-400 h-2 rounded-full transition-all duration-300"
-                                                    style={{ width: `${ticket.progress}%` }}
-                                                ></div>
-                                            </div>
+                                        <div className="mb-6">
+                                            <LiquidProgressBar
+                                                progress={ticket.progress}
+                                                className="h-4"
+                                                colors="from-purple-500 via-pink-500 to-purple-600"
+                                            />
                                         </div>
 
-                                        <div className="grid md:grid-cols-2 gap-6">
+                                        <div className="grid md:grid-cols-2 gap-8">
                                             <div>
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <h4 className="font-semibold text-gray-800">Project Phases</h4>
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <h4 className="font-bold text-gray-800 text-lg">Project Phases</h4>
                                                     <button
                                                         onClick={() => setShowAddPhase(ticket.id)}
-                                                        className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1"
+                                                        className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1 transform hover:scale-105 transition-all"
                                                         title="Add new phase"
                                                     >
                                                         <Plus className="w-3 h-3" />
                                                         <span>Add Phase</span>
                                                     </button>
                                                 </div>
-                                                <div className="space-y-2">
+                                                <div className="space-y-3">
                                                     {ticket.plan.phases.map((phase, index) => {
                                                         const isCurrentPhase = !phase.completed && !ticket.plan.phases.slice(0, index).some(p => !p.completed);
                                                         const phaseTasks = ticket.plan.tasks.filter(task => task.phase === phase.id);
@@ -1121,15 +1347,15 @@ Respond with a helpful message (not JSON this time).`
                                                         const isSelectedPhase = selectedPhase === `${ticket.id}-${phase.id}`;
 
                                                         return (
-                                                            <div key={phase.id} className="flex items-center space-x-2 text-sm group">
+                                                            <div key={phase.id} className="flex items-center space-x-3 text-sm group">
                                                                 <button
                                                                     onClick={() => togglePhaseComplete(ticket.id, phase.id)}
-                                                                    className={`w-2 h-2 rounded-full transition-colors ${
+                                                                    className={`w-4 h-4 rounded-full transition-all duration-300 shadow-lg ${
                                                                         phase.completed
-                                                                            ? 'bg-green-400'
+                                                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500'
                                                                             : isCurrentPhase
-                                                                                ? 'bg-purple-400 animate-pulse'
-                                                                                : 'bg-gray-300 hover:bg-purple-300'
+                                                                                ? `bg-gradient-to-r ${getPhaseColor(phase.name, index)} animate-pulse`
+                                                                                : 'bg-gray-300 hover:bg-gray-400'
                                                                     }`}
                                                                 ></button>
                                                                 {editingPhase === `${ticket.id}-${phase.id}` ? (
@@ -1151,13 +1377,13 @@ Respond with a helpful message (not JSON this time).`
                                                                     />
                                                                 ) : (
                                                                     <span
-                                                                        className={`cursor-pointer hover:text-purple-600 transition-colors ${
+                                                                        className={`cursor-pointer hover:text-purple-600 transition-colors font-medium ${
                                                                             phase.completed
                                                                                 ? 'line-through text-gray-500'
                                                                                 : isCurrentPhase
-                                                                                    ? 'text-purple-600 font-medium'
+                                                                                    ? 'text-purple-600 font-bold'
                                                                                     : isSelectedPhase
-                                                                                        ? 'text-purple-600 font-medium bg-purple-50 px-2 py-1 rounded'
+                                                                                        ? 'text-purple-600 font-bold bg-purple-50 px-2 py-1 rounded'
                                                                                         : 'text-gray-700'
                                                                         }`}
                                                                         onClick={() => {
@@ -1168,14 +1394,14 @@ Respond with a helpful message (not JSON this time).`
                                                                         title={`Click to view tasks • ${completedPhaseTasks}/${phaseTasks.length} tasks completed`}
                                                                     >
                                                                         {phase.name}
-                                                                        {isCurrentPhase && <span className="ml-1 text-xs">← Current</span>}
-                                                                        {isSelectedPhase && <span className="ml-1 text-xs">← Viewing</span>}
+                                                                        {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Current</span>}
+                                                                        {isSelectedPhase && <span className="ml-2 text-xs">← Viewing</span>}
                                                                         <span className="ml-2 text-xs text-gray-400">({completedPhaseTasks}/{phaseTasks.length})</span>
                                                                     </span>
                                                                 )}
                                                                 <button
                                                                     onClick={() => removePhase(ticket.id, phase.id)}
-                                                                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all"
+                                                                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all transform hover:scale-110"
                                                                     title="Remove phase"
                                                                 >
                                                                     <X className="w-3 h-3" />
@@ -1199,7 +1425,7 @@ Respond with a helpful message (not JSON this time).`
                                                             />
                                                             <button
                                                                 onClick={() => addPhaseToTicket(ticket.id)}
-                                                                className="text-green-600 hover:text-green-700"
+                                                                className="text-green-600 hover:text-green-700 transform hover:scale-110 transition-all"
                                                                 title="Add phase"
                                                             >
                                                                 <CheckCircle className="w-4 h-4" />
@@ -1209,7 +1435,7 @@ Respond with a helpful message (not JSON this time).`
                                                                     setShowAddPhase(null);
                                                                     setNewPhaseName('');
                                                                 }}
-                                                                className="text-gray-400 hover:text-gray-600"
+                                                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                                                                 title="Cancel"
                                                             >
                                                                 <X className="w-4 h-4" />
@@ -1220,8 +1446,8 @@ Respond with a helpful message (not JSON this time).`
                                             </div>
 
                                             <div>
-                                                <div className="flex items-center justify-between mb-3">
-                                                    <h4 className="font-semibold text-gray-800">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <h4 className="font-bold text-gray-800 text-lg">
                                                         {selectedPhase ?
                                                             (() => {
                                                                 const [ticketIdStr, phaseIdStr] = selectedPhase.split('-');
@@ -1235,7 +1461,7 @@ Respond with a helpful message (not JSON this time).`
                                                         {selectedPhase && (
                                                             <button
                                                                 onClick={() => setSelectedPhase(null)}
-                                                                className="text-xs text-gray-500 hover:text-gray-700"
+                                                                className="text-xs text-gray-500 hover:text-gray-700 transform hover:scale-105 transition-all"
                                                             >
                                                                 Show Current
                                                             </button>
@@ -1246,7 +1472,7 @@ Respond with a helpful message (not JSON this time).`
                                                                     ticket.plan.phases.find(p => !p.completed)?.id || ticket.plan.phases[0]?.id;
                                                                 setShowAddTask(`${ticket.id}-${phaseId}`);
                                                             }}
-                                                            className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1"
+                                                            className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1 transform hover:scale-105 transition-all"
                                                             title="Add new task"
                                                         >
                                                             <Plus className="w-3 h-3" />
@@ -1254,7 +1480,7 @@ Respond with a helpful message (not JSON this time).`
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <div className="space-y-2">
+                                                <div className="space-y-3">
                                                     {(() => {
                                                         let tasksToShow;
 
@@ -1267,14 +1493,16 @@ Respond with a helpful message (not JSON this time).`
                                                         }
 
                                                         return tasksToShow.length > 0 ? tasksToShow.map(task => (
-                                                            <div key={task.id} className="flex items-center space-x-2 group">
+                                                            <div key={task.id} className="flex items-center space-x-3 group">
                                                                 <button
                                                                     onClick={() => toggleTaskComplete(ticket.id, task.id)}
-                                                                    className={`w-4 h-4 rounded border flex items-center justify-center ${
-                                                                        task.completed ? 'bg-green-400 border-green-400' : 'border-gray-300'
+                                                                    className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-300 transform hover:scale-110 ${
+                                                                        task.completed
+                                                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400 shadow-lg'
+                                                                            : 'border-gray-300 hover:border-purple-400 hover:shadow-md'
                                                                     }`}
                                                                 >
-                                                                    {task.completed && <CheckCircle className="w-2 h-2 text-white" />}
+                                                                    {task.completed && <CheckCircle className="w-3 h-3 text-white" />}
                                                                 </button>
                                                                 {editingTask === `${ticket.id}-${task.id}` ? (
                                                                     <input
@@ -1306,36 +1534,36 @@ Respond with a helpful message (not JSON this time).`
                                                                     {!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== ticket.id) ? (
                                                                         <button
                                                                             onClick={() => startTimer(task.id, ticket.id)}
-                                                                            className="text-gray-400 hover:text-green-600 transition-colors"
+                                                                            className="text-gray-400 hover:text-green-600 transition-colors transform hover:scale-110"
                                                                             title="Start timer"
                                                                         >
-                                                                            <Clock className="w-3 h-3" />
+                                                                            <Clock className="w-4 h-4" />
                                                                         </button>
                                                                     ) : (
                                                                         <button
                                                                             onClick={stopTimer}
-                                                                            className="text-green-600 hover:text-red-600 transition-colors"
+                                                                            className="text-green-600 hover:text-red-600 transition-colors transform hover:scale-110"
                                                                             title="Stop timer"
                                                                         >
-                                                                            <X className="w-3 h-3" />
+                                                                            <X className="w-4 h-4" />
                                                                         </button>
                                                                     )}
                                                                     <button
                                                                         onClick={() => removeTask(ticket.id, task.id)}
-                                                                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all"
+                                                                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all transform hover:scale-110"
                                                                         title="Remove task"
                                                                     >
                                                                         <Trash2 className="w-3 h-3" />
                                                                     </button>
                                                                     {timeSpent[`${ticket.id}-${task.id}`] && (
-                                                                        <span className="text-xs text-blue-600">
+                                                                        <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
                                                                             {formatTime(timeSpent[`${ticket.id}-${task.id}`])}
                                                                         </span>
                                                                     )}
                                                                 </div>
                                                             </div>
                                                         )) : (
-                                                            <div className="text-sm text-gray-500 italic">
+                                                            <div className="text-sm text-gray-500 italic bg-gray-50 p-4 rounded-xl">
                                                                 {selectedPhase
                                                                     ? 'No tasks in this phase yet. Add some tasks to get started!'
                                                                     : getRelevantTasks(ticket).length === 0
@@ -1344,7 +1572,7 @@ Respond with a helpful message (not JSON this time).`
                                                                 }
                                                             </div>
                                                         );
-                                                    })()}}
+                                                    })()}
 
                                                     {/* Add Task Form */}
                                                     {showAddTask && showAddTask.startsWith(`${ticket.id}-`) && (
@@ -1368,7 +1596,7 @@ Respond with a helpful message (not JSON this time).`
                                                                     const phaseId = parseInt(showAddTask.split('-')[1]);
                                                                     addTaskToPhase(ticket.id, phaseId);
                                                                 }}
-                                                                className="text-green-600 hover:text-green-700"
+                                                                className="text-green-600 hover:text-green-700 transform hover:scale-110 transition-all"
                                                                 title="Add task"
                                                             >
                                                                 <CheckCircle className="w-4 h-4" />
@@ -1378,7 +1606,7 @@ Respond with a helpful message (not JSON this time).`
                                                                     setShowAddTask(null);
                                                                     setNewTaskTitle('');
                                                                 }}
-                                                                className="text-gray-400 hover:text-gray-600"
+                                                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                                                                 title="Cancel"
                                                             >
                                                                 <X className="w-4 h-4" />
@@ -1392,13 +1620,15 @@ Respond with a helpful message (not JSON this time).`
                                 ))}
 
                                 {tickets.length === 0 && (
-                                    <div className="text-center py-12">
-                                        <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                        <h3 className="text-xl font-semibold text-gray-600 mb-2">No projects yet</h3>
-                                        <p className="text-gray-500 mb-4">Create your first research project to get started!</p>
+                                    <div className="text-center py-16">
+                                        <div className="bg-gradient-to-r from-purple-500 to-pink-500 w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-8 shadow-2xl">
+                                            <Brain className="w-16 h-16 text-white animate-pulse" />
+                                        </div>
+                                        <h3 className="text-3xl font-bold text-gray-700 mb-4">No projects yet</h3>
+                                        <p className="text-gray-500 text-lg mb-8">Create your first research project to get started!</p>
                                         <button
                                             onClick={() => setShowCreateTask(true)}
-                                            className="bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-3 rounded-xl font-medium hover:shadow-lg transition-all"
+                                            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-8 py-4 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300"
                                         >
                                             Create Your First Project
                                         </button>
@@ -1411,52 +1641,67 @@ Respond with a helpful message (not JSON this time).`
 
                 {currentView === 'calendar' && (
                     <div className="space-y-8">
-                        <div className="bg-white rounded-2xl p-6 shadow-sm border border-purple-100">
-                            <div className="flex items-center justify-between mb-6">
-                                <h2 className="text-2xl font-bold text-gray-800">
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <div className="flex items-center justify-between mb-8">
+                                <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
                                     {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                                 </h2>
-                                <div className="flex items-center space-x-2">
+                                <div className="flex items-center space-x-3">
                                     <button
                                         onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))}
-                                        className="p-2 hover:bg-gray-100 rounded-lg"
+                                        className="p-3 hover:bg-purple-100 rounded-xl transform hover:scale-110 transition-all duration-300"
                                     >
                                         <ChevronLeft className="w-5 h-5" />
                                     </button>
                                     <button
                                         onClick={() => setCurrentDate(new Date())}
-                                        className="px-3 py-1 text-sm bg-purple-100 text-purple-600 rounded-lg"
+                                        className="px-4 py-2 text-sm bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
                                     >
                                         Today
                                     </button>
                                     <button
                                         onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))}
-                                        className="p-2 hover:bg-gray-100 rounded-lg"
+                                        className="p-3 hover:bg-purple-100 rounded-xl transform hover:scale-110 transition-all duration-300"
                                     >
                                         <ChevronRight className="w-5 h-5" />
                                     </button>
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-7 gap-1 mb-2">
+                            <div className="grid grid-cols-7 gap-2 mb-4">
                                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                                    <div key={day} className="p-2 text-center text-sm font-medium text-gray-500">
+                                    <div key={day} className="p-4 text-center text-sm font-bold text-gray-600 bg-gradient-to-r from-purple-100 to-pink-100 rounded-xl">
                                         {day}
                                     </div>
                                 ))}
                             </div>
 
-                            <div className="grid grid-cols-7 gap-1">
+                            <div className="grid grid-cols-7 gap-2">
                                 {getDaysInMonth(currentDate).map((date, index) => {
                                     const tasksForDate = date ? getTasksForDate(date) : [];
                                     const isToday = date && date.toDateString() === new Date().toDateString();
+                                    const taskCount = tasksForDate.length;
+                                    const highPriorityTasks = tasksForDate.filter(task => {
+                                        const ticket = tickets.find(t => t.id === task.ticketId);
+                                        return ticket?.priority === 'High';
+                                    }).length;
 
                                     return (
                                         <div
                                             key={index}
-                                            className={`min-h-[100px] p-2 border border-gray-100 cursor-pointer transition-colors ${
-                                                date ? 'bg-white hover:bg-purple-50' : 'bg-gray-50'
-                                            } ${isToday ? 'ring-2 ring-purple-400' : ''}`}
+                                            className={`min-h-[120px] p-3 border-2 cursor-pointer transition-all duration-300 transform hover:scale-105 rounded-2xl ${
+                                                date
+                                                    ? `bg-gradient-to-br from-white/80 to-purple-50/80 backdrop-blur-sm hover:from-purple-100/80 hover:to-pink-100/80 border-white/50 hover:border-purple-300 shadow-lg hover:shadow-xl`
+                                                    : 'bg-gray-100/50 border-gray-200'
+                                            } ${
+                                                isToday
+                                                    ? 'ring-4 ring-purple-400 animate-pulse shadow-2xl'
+                                                    : ''
+                                            } ${
+                                                taskCount > 0
+                                                    ? `border-gradient-to-r ${taskCount > 3 ? 'from-red-400 to-pink-400' : taskCount > 1 ? 'from-yellow-400 to-orange-400' : 'from-green-400 to-emerald-400'}`
+                                                    : ''
+                                            }`}
                                             onClick={() => {
                                                 if (date) {
                                                     setSelectedDate(date);
@@ -1466,15 +1711,17 @@ Respond with a helpful message (not JSON this time).`
                                         >
                                             {date && (
                                                 <>
-                                                    <div className={`text-sm font-medium mb-1 ${isToday ? 'text-purple-600' : 'text-gray-800'}`}>
+                                                    <div className={`text-lg font-bold mb-2 ${isToday ? 'text-purple-600' : 'text-gray-800'}`}>
                                                         {date.getDate()}
                                                     </div>
                                                     <div className="space-y-1">
-                                                        {tasksForDate.slice(0, 3).map(dateTask => (
+                                                        {tasksForDate.slice(0, 2).map(dateTask => (
                                                             <div
                                                                 key={dateTask.id}
-                                                                className={`text-xs p-1 rounded truncate cursor-pointer ${
-                                                                    dateTask.completed ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
+                                                                className={`text-xs p-2 rounded-lg truncate cursor-pointer transition-all duration-300 transform hover:scale-105 ${
+                                                                    dateTask.completed
+                                                                        ? 'bg-gradient-to-r from-green-400 to-emerald-500 text-white shadow-lg'
+                                                                        : 'bg-gradient-to-r from-blue-400 to-indigo-500 text-white shadow-lg'
                                                                 }`}
                                                                 title={dateTask.title}
                                                                 onClick={(e) => {
@@ -1485,8 +1732,23 @@ Respond with a helpful message (not JSON this time).`
                                                                 {dateTask.title}
                                                             </div>
                                                         ))}
-                                                        {tasksForDate.length > 3 && (
-                                                            <div className="text-xs text-gray-500">+{tasksForDate.length - 3} more</div>
+                                                        {tasksForDate.length > 2 && (
+                                                            <div className="text-xs text-gray-600 bg-gray-200 rounded-lg p-1 text-center font-medium">
+                                                                +{tasksForDate.length - 2} more
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {/* Priority indicators */}
+                                                    <div className="flex justify-center space-x-1 mt-2">
+                                                        {highPriorityTasks > 0 && (
+                                                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                                                        )}
+                                                        {taskCount > 0 && (
+                                                            <div className={`w-2 h-2 rounded-full ${
+                                                                taskCount > 3 ? 'bg-red-400' :
+                                                                    taskCount > 1 ? 'bg-yellow-400' :
+                                                                        'bg-green-400'
+                                                            }`}></div>
                                                         )}
                                                     </div>
                                                 </>
@@ -1496,8 +1758,8 @@ Respond with a helpful message (not JSON this time).`
                                 })}
                             </div>
 
-                            <div className="mt-4 text-sm text-gray-600 text-center">
-                                Click on any date to add a task • Click on tasks to mark complete
+                            <div className="mt-6 text-sm text-gray-600 text-center bg-gradient-to-r from-purple-100 to-pink-100 p-4 rounded-2xl">
+                                Click on any date to add a task • Click on tasks to mark complete • 🔴 = High priority tasks
                             </div>
                         </div>
                     </div>
@@ -1505,70 +1767,44 @@ Respond with a helpful message (not JSON this time).`
 
                 {currentView === 'projects' && (
                     <div className="space-y-8">
-                        {/* Gantt Chart */}
-                        <div className="bg-white rounded-2xl p-6 shadow-sm border border-purple-100">
-                            <h3 className="text-xl font-bold text-gray-800 mb-6">Project Timeline (Gantt Chart)</h3>
+                        {/* Enhanced Gantt Chart */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
+                                Project Timeline (Gantt Chart)
+                            </h3>
                             {tickets.length > 0 ? (
                                 <div className="overflow-x-auto">
                                     <div className="min-w-full">
-                                        {/* Header with months */}
-                                        <div className="flex mb-4">
-                                            <div className="w-64 flex-shrink-0"></div>
-                                            <div className="flex-1 flex">
-                                                {(() => {
-                                                    const startDate = new Date(Math.min(...tickets.map(t => new Date(t.created))));
-                                                    const endDate = new Date(Math.max(...tickets.map(t => new Date(t.deadline))));
-                                                    const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-                                                    const monthsToShow = Math.ceil(totalDays / 30);
-
-                                                    return Array.from({ length: monthsToShow }, (_, i) => {
-                                                        const month = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
-                                                        return (
-                                                            <div key={i} className="flex-1 text-center text-sm font-medium text-gray-600 border-l border-gray-200 px-2">
-                                                                {month.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                                                            </div>
-                                                        );
-                                                    });
-                                                })()}
-                                            </div>
-                                        </div>
-
-                                        {/* Project rows */}
                                         {tickets.map(ticket => {
-                                            const startDate = new Date(Math.min(...tickets.map(t => new Date(t.created))));
-                                            const endDate = new Date(Math.max(...tickets.map(t => new Date(t.deadline))));
+                                            const startDate = new Date(ticket.created);
+                                            const endDate = new Date(ticket.deadline);
                                             const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
 
-                                            const projectStart = new Date(ticket.created);
-                                            const projectEnd = new Date(ticket.deadline);
-                                            const projectDuration = Math.ceil((projectEnd - projectStart) / (1000 * 60 * 60 * 24));
-                                            const startOffset = Math.ceil((projectStart - startDate) / (1000 * 60 * 60 * 24));
-                                            const widthPercent = (projectDuration / totalDays) * 100;
-                                            const leftPercent = (startOffset / totalDays) * 100;
-
                                             return (
-                                                <div key={ticket.id} className="flex items-center mb-4">
-                                                    <div className="w-64 flex-shrink-0 pr-4">
-                                                        <h4 className="font-medium text-gray-800 text-sm">{ticket.title}</h4>
-                                                        <p className="text-xs text-gray-500">{ticket.progress}% complete</p>
+                                                <div key={ticket.id} className="flex items-center mb-6 group">
+                                                    <div className="w-64 flex-shrink-0 pr-6">
+                                                        <h4 className="font-bold text-gray-800 text-lg mb-2">{ticket.title}</h4>
+                                                        <div className="flex items-center space-x-2">
+                                                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${getPriorityColor(ticket.priority)} shadow-lg`}></div>
+                                                            <p className="text-sm text-gray-600">{ticket.progress}% complete</p>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex-1 relative h-8 bg-gray-100 rounded cursor-pointer hover:bg-gray-200 transition-colors">
-                                                        <div
-                                                            className="absolute top-0 h-full bg-gradient-to-r from-purple-400 to-pink-400 rounded flex items-center px-2"
-                                                            style={{
-                                                                left: `${leftPercent}%`,
-                                                                width: `${widthPercent}%`
-                                                            }}
-                                                        >
-                                                            <div
-                                                                className="bg-purple-600 h-full rounded"
-                                                                style={{ width: `${ticket.progress}%` }}
-                                                            ></div>
+                                                    <div className="flex-1 relative h-12 bg-gradient-to-r from-gray-200 to-gray-300 rounded-xl cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden">
+                                                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 rounded-xl shadow-lg transform hover:scale-105 transition-all duration-300">
+                                                            <LiquidProgressBar
+                                                                progress={ticket.progress}
+                                                                className="h-full rounded-xl"
+                                                                colors="from-purple-600 via-pink-600 to-purple-700"
+                                                            />
                                                         </div>
                                                         <div className="absolute inset-0 flex items-center justify-center">
-                                                            <span className="text-xs text-white font-medium">
-                                                                {projectStart.toLocaleDateString()} - {projectEnd.toLocaleDateString()}
+                                                            <span className="text-sm text-white font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">
+                                                                {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}
                                                             </span>
+                                                        </div>
+                                                        {/* Deadline indicator */}
+                                                        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                                                            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-bounce shadow-lg"></div>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -1577,63 +1813,98 @@ Respond with a helpful message (not JSON this time).`
                                     </div>
                                 </div>
                             ) : (
-                                <div className="text-center py-8 text-gray-500">
-                                    No projects to display in timeline
+                                <div className="text-center py-12 text-gray-500">
+                                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                                    <p className="text-lg">No projects to display in timeline</p>
                                 </div>
                             )}
                         </div>
 
-                        <div className="grid md:grid-cols-2 gap-6">
+                        {/* Enhanced Project Cards */}
+                        <div className="grid md:grid-cols-2 gap-8">
                             {tickets.map(ticket => (
-                                <div key={ticket.id} className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl p-6 border border-purple-100">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="text-xl font-bold text-gray-800">{ticket.title}</h3>
-                                        <div className="flex items-center space-x-2">
-                                            <span className="text-sm text-gray-600">Due: {ticket.deadline}</span>
-                                            <button
-                                                onClick={() => setEditingTicket(ticket)}
-                                                className="p-1 text-gray-400 hover:text-purple-600 transition-colors"
-                                            >
-                                                <Edit className="w-4 h-4" />
-                                            </button>
+                                <div key={ticket.id} className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 border border-white/30 shadow-xl hover:shadow-2xl transform hover:scale-[1.02] transition-all duration-300 group">
+                                    <div className="flex items-center justify-between mb-6">
+                                        <h3 className="text-2xl font-bold text-gray-800">{ticket.title}</h3>
+                                        <div className="flex items-center space-x-3">
+                                            <span className="text-sm text-gray-600 bg-white/50 px-3 py-1 rounded-xl">
+                                                Due: {ticket.deadline}
+                                            </span>
+                                            {getPriorityIcon(ticket.priority)}
                                         </div>
                                     </div>
 
-                                    <div className="mb-4">
-                                        <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
-                                            <span>Progress</span>
-                                            <span>{ticket.progress}%</span>
-                                        </div>
-                                        <div className="w-full bg-gray-200 rounded-full h-2">
-                                            <div
-                                                className="bg-gradient-to-r from-purple-400 to-pink-400 h-2 rounded-full transition-all duration-300"
-                                                style={{ width: `${ticket.progress}%` }}
-                                            ></div>
+                                    {/* Radial Progress */}
+                                    <div className="flex items-center justify-center mb-6">
+                                        <div className="relative w-32 h-32">
+                                            <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 36 36">
+                                                <path
+                                                    d="m18,2.0845
+                                                    a 15.9155,15.9155 0 0,1 0,31.831
+                                                    a 15.9155,15.9155 0 0,1 0,-31.831"
+                                                    fill="none"
+                                                    stroke="rgba(156, 163, 175, 0.3)"
+                                                    strokeWidth="3"
+                                                />
+                                                <path
+                                                    d="m18,2.0845
+                                                    a 15.9155,15.9155 0 0,1 0,31.831
+                                                    a 15.9155,15.9155 0 0,1 0,-31.831"
+                                                    fill="none"
+                                                    stroke="url(#gradient)"
+                                                    strokeWidth="3"
+                                                    strokeDasharray={`${ticket.progress}, 100`}
+                                                    strokeDashoffset="0"
+                                                    strokeLinecap="round"
+                                                    className="transition-all duration-1000 ease-out"
+                                                />
+                                                <defs>
+                                                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                                        <stop offset="0%" stopColor="#8b5cf6" />
+                                                        <stop offset="100%" stopColor="#ec4899" />
+                                                    </linearGradient>
+                                                </defs>
+                                            </svg>
+                                            <div className="absolute inset-0 flex items-center justify-center">
+                                                <span className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                                    {ticket.progress}%
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
 
-                                    <div className="space-y-2">
+                                    {/* Phase Progress */}
+                                    <div className="space-y-4">
                                         {ticket.plan.phases.slice(0, 3).map((phase, index) => {
                                             const isCurrentPhase = !phase.completed && !ticket.plan.phases.slice(0, index).some(p => !p.completed);
                                             return (
-                                                <div key={phase.id} className="flex items-center space-x-2 text-sm">
-                                                    <div className={`w-2 h-2 rounded-full transition-colors ${
+                                                <div key={phase.id} className="flex items-center space-x-4">
+                                                    <div className={`w-4 h-4 rounded-full transition-all duration-300 shadow-lg ${
                                                         phase.completed
-                                                            ? 'bg-green-400'
+                                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500'
                                                             : isCurrentPhase
-                                                                ? 'bg-purple-400 animate-pulse'
+                                                                ? `bg-gradient-to-r ${getPhaseColor(phase.name, index)} animate-pulse`
                                                                 : 'bg-gray-400'
                                                     }`}></div>
-                                                    <span className={`${
-                                                        phase.completed
-                                                            ? 'line-through text-gray-500'
-                                                            : isCurrentPhase
-                                                                ? 'text-purple-600 font-medium'
-                                                                : 'text-gray-700'
-                                                    }`}>
-                                                        {phase.name}
-                                                        {isCurrentPhase && <span className="ml-1 text-xs">← Active</span>}
-                                                    </span>
+                                                    <div className="flex-1">
+                                                        <span className={`text-sm font-medium ${
+                                                            phase.completed
+                                                                ? 'line-through text-gray-500'
+                                                                : isCurrentPhase
+                                                                    ? 'text-purple-600 font-bold'
+                                                                    : 'text-gray-700'
+                                                        }`}>
+                                                            {phase.name}
+                                                            {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Active</span>}
+                                                        </span>
+                                                        <div className="mt-1">
+                                                            <LiquidProgressBar
+                                                                progress={phase.completed ? 100 : (isCurrentPhase ? 50 : 0)}
+                                                                className="h-1"
+                                                                colors={getPhaseColor(phase.name, index)}
+                                                            />
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             );
                                         })}
@@ -1646,112 +1917,133 @@ Respond with a helpful message (not JSON this time).`
 
                 {currentView === 'analytics' && (
                     <div className="space-y-8">
+                        {/* Enhanced Stats Grid */}
                         <div className="grid md:grid-cols-4 gap-6">
-                            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-6 border border-blue-200">
-                                <div className="flex items-center space-x-3 mb-4">
-                                    <div className="bg-blue-400 p-2 rounded-lg">
-                                        <Target className="w-5 h-5 text-white" />
+                            {[
+                                {
+                                    title: 'Active Projects',
+                                    value: tickets.length,
+                                    icon: Target,
+                                    gradient: 'from-blue-500 to-indigo-600',
+                                    bg: 'from-blue-50 to-indigo-100'
+                                },
+                                {
+                                    title: 'Avg Progress',
+                                    value: `${tickets.length > 0 ? Math.round(tickets.reduce((sum, t) => sum + t.progress, 0) / tickets.length) : 0}%`,
+                                    icon: CheckCircle,
+                                    gradient: 'from-green-500 to-emerald-600',
+                                    bg: 'from-green-50 to-emerald-100'
+                                },
+                                {
+                                    title: 'Time Tracked',
+                                    value: formatTime(getTotalTimeSpent()),
+                                    icon: Clock,
+                                    gradient: 'from-yellow-500 to-orange-600',
+                                    bg: 'from-yellow-50 to-orange-100'
+                                },
+                                {
+                                    title: 'High Priority',
+                                    value: tickets.filter(t => t.priority === 'High').length,
+                                    icon: AlertTriangle,
+                                    gradient: 'from-red-500 to-pink-600',
+                                    bg: 'from-red-50 to-pink-100'
+                                }
+                            ].map((stat, index) => (
+                                <div key={index} className={`bg-gradient-to-br ${stat.bg} backdrop-blur-lg rounded-3xl p-8 border border-white/50 shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all duration-300`}>
+                                    <div className="flex items-center space-x-4 mb-6">
+                                        <div className={`bg-gradient-to-r ${stat.gradient} p-4 rounded-2xl shadow-lg`}>
+                                            <stat.icon className="w-8 h-8 text-white" />
+                                        </div>
+                                        <h3 className="font-bold text-gray-800 text-lg">{stat.title}</h3>
                                     </div>
-                                    <h3 className="font-bold text-gray-800">Active Tickets</h3>
+                                    <div className="text-4xl font-bold bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent mb-2">
+                                        {stat.value}
+                                    </div>
+                                    <p className="text-sm text-gray-600">
+                                        {index === 0 && 'Research projects active'}
+                                        {index === 1 && 'Across all projects'}
+                                        {index === 2 && 'Total time logged'}
+                                        {index === 3 && 'Projects need attention'}
+                                    </p>
                                 </div>
-                                <div className="text-3xl font-bold text-blue-600 mb-2">{tickets.length}</div>
-                                <p className="text-sm text-gray-600">Research projects in progress</p>
-                            </div>
+                            ))}
+                        </div>
 
-                            <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-2xl p-6 border border-green-200">
-                                <div className="flex items-center space-x-3 mb-4">
-                                    <div className="bg-green-400 p-2 rounded-lg">
-                                        <CheckCircle className="w-5 h-5 text-white" />
-                                    </div>
-                                    <h3 className="font-bold text-gray-800">Avg Progress</h3>
-                                </div>
-                                <div className="text-3xl font-bold text-green-600 mb-2">
-                                    {tickets.length > 0 ? Math.round(tickets.reduce((sum, t) => sum + t.progress, 0) / tickets.length) : 0}%
-                                </div>
-                                <p className="text-sm text-gray-600">Across all projects</p>
-                            </div>
-
-                            <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 rounded-2xl p-6 border border-yellow-200">
-                                <div className="flex items-center space-x-3 mb-4">
-                                    <div className="bg-yellow-400 p-2 rounded-lg">
-                                        <Clock className="w-5 h-5 text-white" />
-                                    </div>
-                                    <h3 className="font-bold text-gray-800">Time Tracked</h3>
-                                </div>
-                                <div className="text-3xl font-bold text-yellow-600 mb-2">
-                                    {formatTime(getTotalTimeSpent())}
-                                </div>
-                                <p className="text-sm text-gray-600">Total time logged</p>
-                            </div>
-
-                            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-2xl p-6 border border-purple-200">
-                                <div className="flex items-center space-x-3 mb-4">
-                                    <div className="bg-purple-400 p-2 rounded-lg">
-                                        <AlertTriangle className="w-5 h-5 text-white" />
-                                    </div>
-                                    <h3 className="font-bold text-gray-800">High Priority</h3>
-                                </div>
-                                <div className="text-3xl font-bold text-purple-600 mb-2">
-                                    {tickets.filter(t => t.priority === 'High').length}
-                                </div>
-                                <p className="text-sm text-gray-600">Projects need attention</p>
+                        {/* Enhanced Quick Actions */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
+                                Quick Actions
+                            </h3>
+                            <div className="grid md:grid-cols-3 gap-6">
+                                {[
+                                    {
+                                        title: 'Focus Mode',
+                                        description: 'Hide completed tasks and show only urgent items',
+                                        icon: Target,
+                                        gradient: 'from-purple-500 to-indigo-600',
+                                        action: () => addNotification('🎯 Focus mode activated! Showing only urgent tasks.', 'info')
+                                    },
+                                    {
+                                        title: 'Export Data',
+                                        description: 'Download your progress report as JSON',
+                                        icon: TrendingUp,
+                                        gradient: 'from-green-500 to-emerald-600',
+                                        action: exportData
+                                    },
+                                    {
+                                        title: 'Time Tracking',
+                                        description: 'Start timer for active tasks',
+                                        icon: Clock,
+                                        gradient: 'from-blue-500 to-cyan-600',
+                                        action: () => setShowTimeTracker(true)
+                                    }
+                                ].map((action, index) => (
+                                    <button
+                                        key={index}
+                                        onClick={action.action}
+                                        className="p-6 border-2 border-white/50 rounded-2xl hover:bg-white/80 transition-all duration-300 text-left group transform hover:scale-105 hover:shadow-xl bg-gradient-to-br from-white/60 to-gray-50/60 backdrop-blur-sm"
+                                    >
+                                        <div className="flex items-center space-x-4 mb-4">
+                                            <div className={`bg-gradient-to-r ${action.gradient} p-3 rounded-xl group-hover:scale-110 transition-all duration-300 shadow-lg`}>
+                                                <action.icon className="w-6 h-6 text-white" />
+                                            </div>
+                                            <h4 className="font-bold text-gray-800 group-hover:text-purple-600 transition-colors text-lg">
+                                                {action.title}
+                                            </h4>
+                                        </div>
+                                        <p className="text-sm text-gray-600 group-hover:text-gray-700 transition-colors">
+                                            {action.description}
+                                        </p>
+                                        {index === 2 && getTotalTimeSpent() > 0 && (
+                                            <div className="mt-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                                                📊 Total: {formatTime(getTotalTimeSpent())}
+                                            </div>
+                                        )}
+                                        {index === 2 && activeTimer && (
+                                            <div className="mt-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                                ⏱️ Timer running
+                                            </div>
+                                        )}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
-                        {/* Interactive Filters */}
-                        <div className="bg-white rounded-2xl p-6 shadow-sm border border-purple-100">
-                            <h3 className="text-xl font-bold text-gray-800 mb-4">Quick Actions</h3>
-                            <div className="grid md:grid-cols-3 gap-4">
-                                <button
-                                    onClick={() => addNotification('🎯 Focus mode activated! Showing only urgent tasks.', 'info')}
-                                    className="p-4 border border-purple-200 rounded-xl hover:bg-purple-50 transition-colors text-left group"
-                                >
-                                    <h4 className="font-semibold text-gray-800 group-hover:text-purple-600">Focus Mode</h4>
-                                    <p className="text-sm text-gray-600 mt-1">Hide completed tasks and show only urgent items</p>
-                                </button>
+                        {/* AI Insights */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">AI Insights</h3>
 
-                                <button
-                                    onClick={exportData}
-                                    className="p-4 border border-green-200 rounded-xl hover:bg-green-50 transition-colors text-left group"
-                                >
-                                    <h4 className="font-semibold text-gray-800 group-hover:text-green-600">Export Data</h4>
-                                    <p className="text-sm text-gray-600 mt-1">Download your progress report as JSON</p>
-                                </button>
-
-                                <button
-                                    onClick={() => setShowTimeTracker(true)}
-                                    className="p-4 border border-blue-200 rounded-xl hover:bg-blue-50 transition-colors text-left group"
-                                >
-                                    <h4 className="font-semibold text-gray-800 group-hover:text-blue-600">Time Tracking</h4>
-                                    <p className="text-sm text-gray-600 mt-1">Start timer for active tasks</p>
-                                    {getTotalTimeSpent() > 0 && (
-                                        <div className="mt-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
-                                            📊 Total: {formatTime(getTotalTimeSpent())}
-                                        </div>
-                                    )}
-                                    {activeTimer && (
-                                        <div className="mt-2 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                                            ⏱️ Timer running
-                                        </div>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className="bg-white rounded-2xl p-6 shadow-sm border border-purple-100">
-                            <h3 className="text-xl font-bold text-gray-800 mb-6">AI Insights</h3>
-
-                            <div className="space-y-4">
-                                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                                    <div className="flex items-start space-x-3">
-                                        <div className="bg-blue-400 p-1 rounded-full mt-1">
-                                            <TrendingUp className="w-3 h-3 text-white" />
+                            <div className="space-y-6">
+                                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
+                                    <div className="flex items-start space-x-4">
+                                        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-3 rounded-xl shadow-lg">
+                                            <TrendingUp className="w-6 h-6 text-white" />
                                         </div>
                                         <div>
-                                            <h4 className="font-semibold text-gray-800">Project Timeline Analysis</h4>
-                                            <p className="text-sm text-gray-600 mt-1">
+                                            <h4 className="font-bold text-gray-800 text-lg mb-2">Project Timeline Analysis</h4>
+                                            <p className="text-gray-600">
                                                 {tickets.length > 0 && tickets[0].progress > 0
-                                                    ? `Your ${tickets[0].title} is ${tickets[0].progress}% complete. You're making good progress!`
+                                                    ? `Your ${tickets[0].title} is ${tickets[0].progress}% complete. You're making excellent progress!`
                                                     : "Start completing tasks to see progress insights here."
                                                 }
                                             </p>
@@ -1759,33 +2051,33 @@ Respond with a helpful message (not JSON this time).`
                                     </div>
                                 </div>
 
-                                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                                    <div className="flex items-start space-x-3">
-                                        <div className="bg-yellow-400 p-1 rounded-full mt-1">
-                                            <AlertTriangle className="w-3 h-3 text-white" />
+                                <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-2xl p-6">
+                                    <div className="flex items-start space-x-4">
+                                        <div className="bg-gradient-to-r from-yellow-500 to-orange-600 p-3 rounded-xl shadow-lg">
+                                            <AlertTriangle className="w-6 h-6 text-white" />
                                         </div>
                                         <div>
-                                            <h4 className="font-semibold text-gray-800">Attention Needed</h4>
-                                            <p className="text-sm text-gray-600 mt-1">
+                                            <h4 className="font-bold text-gray-800 text-lg mb-2">Attention Needed</h4>
+                                            <p className="text-gray-600">
                                                 {tickets.filter(t => t.priority === 'High' && t.progress < 50).length > 0
                                                     ? `You have ${tickets.filter(t => t.priority === 'High' && t.progress < 50).length} high-priority projects that need attention.`
-                                                    : "All your high-priority projects are on track!"
+                                                    : "All your high-priority projects are on track! 🎯"
                                                 }
                                             </p>
                                         </div>
                                     </div>
                                 </div>
 
-                                <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                                    <div className="flex items-start space-x-3">
-                                        <div className="bg-green-400 p-1 rounded-full mt-1">
-                                            <CheckCircle className="w-3 h-3 text-white" />
+                                <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-6">
+                                    <div className="flex items-start space-x-4">
+                                        <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-3 rounded-xl shadow-lg">
+                                            <CheckCircle className="w-6 h-6 text-white" />
                                         </div>
                                         <div>
-                                            <h4 className="font-semibold text-gray-800">Research Momentum</h4>
-                                            <p className="text-sm text-gray-600 mt-1">
+                                            <h4 className="font-bold text-gray-800 text-lg mb-2">Research Momentum</h4>
+                                            <p className="text-gray-600">
                                                 {tickets.length > 0
-                                                    ? `You have ${tickets.length} active research projects. Great momentum on maintaining multiple streams of work!`
+                                                    ? `You have ${tickets.length} active research projects. Excellent momentum on maintaining multiple research streams! 🚀`
                                                     : "Create your first research project to start tracking momentum."
                                                 }
                                             </p>
@@ -1798,17 +2090,17 @@ Respond with a helpful message (not JSON this time).`
                 )}
             </main>
 
-            {/* Notifications */}
-            <div className="fixed top-20 right-6 z-50 space-y-2">
+            {/* Enhanced Notifications */}
+            <div className="fixed top-24 right-6 z-50 space-y-3">
                 {notifications.map(notification => (
                     <div
                         key={notification.id}
-                        className={`p-4 rounded-xl shadow-lg border transition-all duration-300 ${
+                        className={`p-4 rounded-2xl shadow-2xl border backdrop-blur-lg transform animate-slide-in transition-all duration-500 ${
                             notification.type === 'success'
-                                ? 'bg-green-100 border-green-200 text-green-800'
+                                ? 'bg-gradient-to-r from-green-100/90 to-emerald-100/90 border-green-300 text-green-800'
                                 : notification.type === 'error'
-                                    ? 'bg-red-100 border-red-200 text-red-800'
-                                    : 'bg-blue-100 border-blue-200 text-blue-800'
+                                    ? 'bg-gradient-to-r from-red-100/90 to-pink-100/90 border-red-300 text-red-800'
+                                    : 'bg-gradient-to-r from-blue-100/90 to-indigo-100/90 border-blue-300 text-blue-800'
                         }`}
                     >
                         <p className="text-sm font-medium">{notification.message}</p>
@@ -1818,26 +2110,26 @@ Respond with a helpful message (not JSON this time).`
 
             {/* Edit Ticket Modal */}
             {editingTicket && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-8 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-white/30">
                         <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-bold text-gray-800">Edit Ticket</h2>
+                            <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">Edit Ticket</h2>
                             <button
                                 onClick={() => setEditingTicket(null)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                             >
                                 <X className="w-6 h-6" />
                             </button>
                         </div>
 
-                        <div className="space-y-4">
+                        <div className="space-y-6">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">Title</label>
                                 <input
                                     type="text"
                                     value={editingTicket.title}
                                     onChange={(e) => setEditingTicket({ ...editingTicket, title: e.target.value })}
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white/70 backdrop-blur-sm"
                                 />
                             </div>
 
@@ -1846,7 +2138,7 @@ Respond with a helpful message (not JSON this time).`
                                 <textarea
                                     value={editingTicket.description}
                                     onChange={(e) => setEditingTicket({ ...editingTicket, description: e.target.value })}
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 resize-none bg-white/70 backdrop-blur-sm"
                                     rows={3}
                                 />
                             </div>
@@ -1857,7 +2149,7 @@ Respond with a helpful message (not JSON this time).`
                                     <select
                                         value={editingTicket.priority}
                                         onChange={(e) => setEditingTicket({ ...editingTicket, priority: e.target.value })}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white/70 backdrop-blur-sm"
                                     >
                                         <option value="Low">Low</option>
                                         <option value="Medium">Medium</option>
@@ -1871,21 +2163,21 @@ Respond with a helpful message (not JSON this time).`
                                         type="date"
                                         value={editingTicket.deadline}
                                         onChange={(e) => setEditingTicket({ ...editingTicket, deadline: e.target.value })}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                        className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white/70 backdrop-blur-sm"
                                     />
                                 </div>
                             </div>
 
-                            <div className="flex space-x-3 pt-4">
+                            <div className="flex space-x-4 pt-4">
                                 <button
                                     onClick={() => saveTicketEdit(editingTicket.id, editingTicket)}
-                                    className="flex-1 bg-gradient-to-r from-purple-400 to-pink-400 text-white px-6 py-3 rounded-xl font-medium hover:shadow-lg transition-all"
+                                    className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-8 py-4 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300"
                                 >
                                     Save Changes
                                 </button>
                                 <button
                                     onClick={() => setEditingTicket(null)}
-                                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all"
+                                    className="px-8 py-4 border border-gray-300 text-gray-700 rounded-2xl font-medium hover:bg-gray-50 transition-all duration-300 transform hover:scale-105"
                                 >
                                     Cancel
                                 </button>
@@ -1897,13 +2189,13 @@ Respond with a helpful message (not JSON this time).`
 
             {/* Time Tracking Modal */}
             {showTimeTracker && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-8 w-full max-w-4xl mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-white/30">
                         <div className="flex items-center justify-between mb-6">
-                            <h2 className="text-2xl font-bold text-gray-800">Time Tracker</h2>
+                            <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">Time Tracker</h2>
                             <button
                                 onClick={() => setShowTimeTracker(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                             >
                                 <X className="w-6 h-6" />
                             </button>
@@ -1912,10 +2204,10 @@ Respond with a helpful message (not JSON this time).`
                         <div className="space-y-6">
                             {/* Active Timer */}
                             {activeTimer && (
-                                <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+                                <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-2xl p-6">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <h3 className="font-semibold text-purple-800">Currently Tracking</h3>
+                                            <h3 className="font-bold text-purple-800 text-lg">Currently Tracking</h3>
                                             <p className="text-purple-600">
                                                 {(() => {
                                                     const ticket = tickets.find(t => t.id === activeTimer.ticketId);
@@ -1925,13 +2217,13 @@ Respond with a helpful message (not JSON this time).`
                                             </p>
                                         </div>
                                         <div className="flex items-center space-x-4">
-                                            <div className="text-2xl font-bold text-purple-600">
+                                            <div className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
                                                 {formatTime(Math.floor((Date.now() - activeTimer.startTime) / 1000) + (timeSpent[`${activeTimer.ticketId}-${activeTimer.taskId}`] || 0))}
                                             </div>
 
                                             <button
                                                 onClick={stopTimer}
-                                                className="bg-red-400 text-white px-4 py-2 rounded-lg hover:bg-red-500 transition-colors"
+                                                className="bg-gradient-to-r from-red-500 to-pink-500 text-white px-6 py-3 rounded-2xl hover:shadow-lg transform hover:scale-105 transition-all duration-300"
                                             >
                                                 Stop Timer
                                             </button>
@@ -1941,25 +2233,25 @@ Respond with a helpful message (not JSON this time).`
                             )}
 
                             {/* Time Summary */}
-                            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                                <h3 className="font-semibold text-blue-800 mb-2">Today's Summary</h3>
-                                <div className="text-2xl font-bold text-blue-600">
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
+                                <h3 className="font-bold text-blue-800 text-lg mb-3">Today's Summary</h3>
+                                <div className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
                                     Total: {formatTime(getTotalTimeSpent())}
                                 </div>
                             </div>
 
                             {/* Tasks with Time Tracking */}
                             <div className="space-y-4">
-                                <h3 className="text-lg font-bold text-gray-800">Track Time for Tasks</h3>
+                                <h3 className="text-xl font-bold text-gray-800">Track Time for Tasks</h3>
                                 {tickets.map(ticket => (
-                                    <div key={ticket.id} className="border border-gray-200 rounded-xl p-4">
-                                        <h4 className="font-semibold text-gray-800 mb-3">{ticket.title}</h4>
-                                        <div className="space-y-2">
+                                    <div key={ticket.id} className="bg-white/50 backdrop-blur-sm border border-gray-200 rounded-2xl p-6">
+                                        <h4 className="font-bold text-gray-800 mb-4 text-lg">{ticket.title}</h4>
+                                        <div className="space-y-3">
                                             {getRelevantTasks(ticket).map(taskItem => (
-                                                <div key={taskItem.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                                <div key={taskItem.id} className="flex items-center justify-between p-4 bg-white/70 rounded-xl backdrop-blur-sm">
                                                     <div className="flex-1">
-                                                        <span className="text-gray-800">{taskItem.title}</span>
-                                                        <div className="text-sm text-gray-500">
+                                                        <span className="text-gray-800 font-medium">{taskItem.title}</span>
+                                                        <div className="text-sm text-gray-500 mt-1">
                                                             Time spent: {formatTime(timeSpent[`${ticket.id}-${taskItem.id}`] || 0)}
                                                         </div>
                                                     </div>
@@ -1967,7 +2259,7 @@ Respond with a helpful message (not JSON this time).`
                                                         {activeTimer?.taskId === taskItem.id && activeTimer?.ticketId === ticket.id ? (
                                                             <button
                                                                 onClick={stopTimer}
-                                                                className="bg-red-400 text-white px-3 py-1 rounded-lg text-sm hover:bg-red-500 transition-colors"
+                                                                className="bg-gradient-to-r from-red-500 to-pink-500 text-white px-4 py-2 rounded-xl text-sm hover:shadow-lg transform hover:scale-105 transition-all duration-300"
                                                             >
                                                                 Stop
                                                             </button>
@@ -1975,7 +2267,7 @@ Respond with a helpful message (not JSON this time).`
                                                             <button
                                                                 onClick={() => startTimer(taskItem.id, ticket.id)}
                                                                 disabled={!!activeTimer}
-                                                                className="bg-green-400 text-white px-3 py-1 rounded-lg text-sm hover:bg-green-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-xl text-sm hover:shadow-lg transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                                                             >
                                                                 Start
                                                             </button>
@@ -1993,13 +2285,13 @@ Respond with a helpful message (not JSON this time).`
             )}
 
             {showAddTaskToDate && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-xl font-bold text-gray-800">Add Task</h3>
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-8 w-full max-w-md mx-4 shadow-2xl border border-white/30">
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">Add Task</h3>
                             <button
                                 onClick={() => setShowAddTaskToDate(false)}
-                                className="text-gray-400 hover:text-gray-600"
+                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                             >
                                 <X className="w-5 h-5" />
                             </button>
@@ -2007,7 +2299,7 @@ Respond with a helpful message (not JSON this time).`
 
                         <div className="space-y-4">
                             <div>
-                                <p className="text-sm text-gray-600 mb-2">
+                                <p className="text-sm text-gray-600 mb-3">
                                     Adding task for {selectedDate?.toLocaleDateString()}
                                 </p>
                                 <input
@@ -2015,11 +2307,11 @@ Respond with a helpful message (not JSON this time).`
                                     value={newDateTask}
                                     onChange={(e) => setNewDateTask(e.target.value)}
                                     placeholder="Enter task description..."
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                    className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white/70 backdrop-blur-sm"
                                 />
                             </div>
 
-                            <div className="flex space-x-2">
+                            <div className="flex space-x-3">
                                 <button
                                     onClick={() => {
                                         // Add task to date functionality (you'd need to implement this)
@@ -2028,13 +2320,13 @@ Respond with a helpful message (not JSON this time).`
                                         setShowAddTaskToDate(false);
                                         setSelectedDate(null);
                                     }}
-                                    className="flex-1 bg-purple-400 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-500 transition-colors"
+                                    className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-lg transform hover:scale-105 transition-all duration-300"
                                 >
                                     Add Task
                                 </button>
                                 <button
                                     onClick={() => setShowAddTaskToDate(false)}
-                                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-2xl font-medium hover:bg-gray-50 transition-all duration-300 transform hover:scale-105"
                                 >
                                     Cancel
                                 </button>
@@ -2044,22 +2336,22 @@ Respond with a helpful message (not JSON this time).`
                 </div>
             )}
 
-            {/* Chat Widget */}
+            {/* Enhanced Chat Widget */}
             <div className="fixed bottom-6 right-6 z-50">
                 {showChat && (
-                    <div className="bg-white rounded-2xl shadow-2xl border border-purple-200 w-96 h-96 mb-4 flex flex-col">
-                        <div className="bg-gradient-to-r from-purple-400 to-pink-400 text-white p-4 rounded-t-2xl">
-                            <h3 className="font-bold">AI Research Assistant</h3>
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl shadow-2xl border border-white/50 w-96 h-96 mb-4 flex flex-col animate-slide-up">
+                        <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-6 rounded-t-3xl">
+                            <h3 className="font-bold text-lg">AI Research Assistant</h3>
                             <p className="text-sm opacity-90">Get insights about your research progress</p>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        <div className="flex-1 overflow-y-auto p-6 space-y-4">
                             {chatMessages.map((msg, idx) => (
                                 <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                    <div className={`max-w-xs p-3 rounded-2xl ${
+                                    <div className={`max-w-xs p-4 rounded-2xl shadow-lg ${
                                         msg.role === 'user'
-                                            ? 'bg-purple-400 text-white'
-                                            : 'bg-gray-100 text-gray-800'
+                                            ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white'
+                                            : 'bg-gradient-to-r from-gray-100 to-gray-200 text-gray-800'
                                     }`}>
                                         <p className="text-sm">{msg.content}</p>
                                     </div>
@@ -2068,34 +2360,30 @@ Respond with a helpful message (not JSON this time).`
 
                             {isProcessing && (
                                 <div className="flex justify-start">
-                                    <div className="bg-gray-100 text-gray-800 p-3 rounded-2xl">
-                                        <div className="flex space-x-1">
-                                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                                        </div>
+                                    <div className="bg-gradient-to-r from-gray-100 to-gray-200 text-gray-800 p-4 rounded-2xl">
+                                        <DNALoader />
                                     </div>
                                 </div>
                             )}
                         </div>
 
-                        <div className="p-4 border-t border-gray-200">
-                            <div className="flex space-x-2">
+                        <div className="p-6 border-t border-gray-200">
+                            <div className="flex space-x-3">
                                 <input
                                     type="text"
                                     value={chatInput}
                                     onChange={(e) => setChatInput(e.target.value)}
                                     onKeyPress={(e) => e.key === 'Enter' && handleChatSubmit()}
                                     placeholder="Ask about your research progress..."
-                                    className="flex-1 px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm"
+                                    className="flex-1 px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 text-sm bg-white/70 backdrop-blur-sm"
                                     disabled={isProcessing}
                                 />
                                 <button
                                     onClick={handleChatSubmit}
                                     disabled={isProcessing || !chatInput.trim()}
-                                    className="bg-purple-400 text-white p-2 rounded-xl hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-3 rounded-2xl hover:shadow-lg transform hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                                 >
-                                    <Plus className="w-4 h-4" />
+                                    <Plus className="w-5 h-5" />
                                 </button>
                             </div>
                         </div>
@@ -2104,11 +2392,53 @@ Respond with a helpful message (not JSON this time).`
 
                 <button
                     onClick={() => setShowChat(!showChat)}
-                    className="bg-gradient-to-r from-purple-400 to-pink-400 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-105"
+                    className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-6 rounded-full shadow-2xl hover:shadow-3xl transition-all duration-300 transform hover:scale-110 animate-bounce"
                 >
-                    <MessageCircle className="w-6 h-6" />
+                    <MessageCircle className="w-8 h-8" />
                 </button>
             </div>
+
+            <style jsx>{`
+                @keyframes float {
+                    0%, 100% { transform: translateY(0px) rotate(0deg); }
+                    50% { transform: translateY(-20px) rotate(180deg); }
+                }
+
+                @keyframes slide-in {
+                    from { transform: translateX(100%); opacity: 0; }
+                    to { transform: translateX(0); opacity: 1; }
+                }
+
+                @keyframes slide-up {
+                    from { transform: translateY(100%); opacity: 0; }
+                    to { transform: translateY(0); opacity: 1; }
+                }
+
+                @keyframes fade-in {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+
+                .animate-float {
+                    animation: float 6s ease-in-out infinite;
+                }
+
+                .animate-slide-in {
+                    animation: slide-in 0.5s ease-out;
+                }
+
+                .animate-slide-up {
+                    animation: slide-up 0.3s ease-out;
+                }
+
+                .animate-fade-in {
+                    animation: fade-in 0.3s ease-out;
+                }
+
+                .animate-reverse {
+                    animation-direction: reverse;
+                }
+            `}</style>
         </div>
     );
 };
