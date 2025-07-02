@@ -4,7 +4,7 @@
   "description": "Backend API for Research Productivity App with AI integration",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node research-backend/railway.js",
     "dev": "nodemon server.js",
     "test": "jest",
     "migrate": "node migrations/migrate.js"
