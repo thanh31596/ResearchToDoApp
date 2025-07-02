@@ -197,7 +197,34 @@ const limiter = rateLimit({
     return req.url === '/health' || req.url === '/' || req.url === '/api/health';
   }
 });
-
+// Add this BEFORE your other routes
+app.get('/api/setup-database', async (req, res) => {
+  try {
+    console.log('🔧 Starting database initialization...');
+    await initDatabase();
+    
+    // Verify tables were created
+    const tableCheck = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public'
+    `);
+    
+    res.json({
+      success: true,
+      message: 'Database initialized successfully! 🎉',
+      tables: tableCheck.rows.map(r => r.table_name),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Database setup error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 app.use('/api/', limiter);
 
 // =============================================================================
