@@ -702,8 +702,36 @@ app.get('/api/export', authenticateToken, async (req, res) => {
 });
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    // Check database connection
+    const dbCheck = await pool.query('SELECT 1');
+    
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV,
+      database: dbCheck ? 'Connected' : 'Disconnected',
+      uptime: process.uptime(),
+      host: req.get('host'),
+      userAgent: req.get('user-agent'),
+      method: req.method,
+      url: req.url,
+      headers: {
+        host: req.get('host'),
+        origin: req.get('origin'),
+        referer: req.get('referer')
+      }
+    });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.status(500).json({
+      status: 'ERROR',
+      timestamp: new Date().toISOString(),
+      error: error.message,
+      host: req.get('host')
+    });
+  }
 });
 
 // Error handling middleware
@@ -715,6 +743,20 @@ app.use((error, req, res, next) => {
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
+});
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Research Productivity Backend API',
+    status: 'Running',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth/*',
+      tickets: '/api/tickets',
+      ai: '/api/ai/*'
+    },
+    host: req.get('host')
+  });
 });
 
 // Start server
