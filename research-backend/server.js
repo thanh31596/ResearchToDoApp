@@ -19,13 +19,50 @@ const pool = new Pool({
 });
 
 // Middleware
-app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
 }));
-app.use(express.json({ limit: '10mb' }));
+app.set('trust proxy', true);
+app.use(cors({
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3000',
+    'https://vercel.app',
+    'https://*.vercel.app',
+    'https://researchtodoapp-production.up.railway.app',
+    /^https:\/\/.*\.vercel\.app$/,
+    'https://stephenresearch.app',
+    'https://www.stephenresearch.app'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200
+}));
 
+app.use(express.json({ limit: '10mb' }));
+// ADD this middleware to handle Railway's host headers:
+app.use((req, res, next) => {
+  // Trust Railway's host headers
+  const allowedHosts = [
+    'localhost:5000',
+    'researchtodoapp-production.up.railway.app'
+  ];
+  
+  const host = req.get('host');
+  const origin = req.get('origin');
+  
+  // Log for debugging
+  console.log('Request host:', host);
+  console.log('Request origin:', origin);
+  
+  next();
+});
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
