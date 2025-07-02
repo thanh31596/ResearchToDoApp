@@ -93,9 +93,9 @@ class ApiService {
     }
 
     // Check if user is authenticated
-    isAuthenticated() {
-        return !!this.token;
-    }
+    // isAuthenticated() {
+    //     return !!this.token;
+    // }
 
     // Ticket/Project methods
     async getTickets() {
@@ -129,12 +129,12 @@ class ApiService {
         });
     }
 
-    async updateTask(taskId, updates) {
-        return this.apiCall(`/tasks/${taskId}`, {
-            method: 'PUT',
-            body: JSON.stringify(updates),
-        });
-    }
+    // async updateTask(taskId, updates) {
+    //     return this.apiCall(`/tasks/${taskId}`, {
+    //         method: 'PUT',
+    //         body: JSON.stringify(updates),
+    //     });
+    // }
 
     // Time tracking methods
     async startTimer(taskId, ticketId) {
@@ -167,21 +167,7 @@ class ApiService {
         });
     }
 
-    // Combined method for creating ticket with AI
-    async createTicketWithAI(description) {
-        try {
-            // Generate plan with AI
-            const planData = await this.generatePlan(description);
 
-            // Create ticket with the generated plan
-            const ticket = await this.createTicket(planData);
-
-            return ticket;
-        } catch (error) {
-            console.error('Error creating ticket with AI:', error);
-            throw error;
-        }
-    }
 
     // Export method
     async exportData() {
@@ -189,4 +175,5 @@ class ApiService {
     }
 }
 
-export default new ApiService();
+const apiServiceInstance = new ApiService();
+export default apiServiceInstance;

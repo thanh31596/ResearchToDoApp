@@ -23,7 +23,7 @@
     "eject": "react-scripts eject",
     "backend": "cd research-backend && npm start",
     "backend-dev": "cd research-backend && npm run dev",
-    "heroku-postbuild": "npm run build"
+    "deploy": "npm run build"
   },
   "eslintConfig": {
     "extends": [

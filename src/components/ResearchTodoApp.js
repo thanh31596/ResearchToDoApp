@@ -101,7 +101,8 @@ const ResearchTodoApp = () => {
         loadTickets();
         loadActiveTimer();
         loadTimeSummary();
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
 
     // Cleanup timer on unmount
     useEffect(() => {
@@ -868,14 +869,14 @@ Respond with a helpful message (not JSON this time).`
         return colors[index % colors.length];
     };
 
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'completed': return 'bg-green-100 text-green-800';
-            case 'in-progress': return 'bg-blue-100 text-blue-800';
-            case 'planned': return 'bg-gray-100 text-gray-800';
-            default: return 'bg-gray-100 text-gray-800';
-        }
-    };
+    // const getStatusColor = (status) => {
+    //     switch (status) {
+    //         case 'completed': return 'bg-green-100 text-green-800';
+    //         case 'in-progress': return 'bg-blue-100 text-blue-800';
+    //         case 'planned': return 'bg-gray-100 text-gray-800';
+    //         default: return 'bg-gray-100 text-gray-800';
+    //     }
+    // };
 
     // Show loading state
     if (loading) {
@@ -1450,7 +1451,7 @@ Respond with a helpful message (not JSON this time).`
                                                     <h4 className="font-bold text-gray-800 text-lg">
                                                         {selectedPhase ?
                                                             (() => {
-                                                                const [ticketIdStr, phaseIdStr] = selectedPhase.split('-');
+                                                                const [, phaseIdStr] = selectedPhase.split('-');
                                                                 const phase = ticket.plan.phases.find(p => p.id === parseInt(phaseIdStr));
                                                                 return `${phase?.name || 'Phase'} Tasks`;
                                                             })() :
@@ -1778,7 +1779,7 @@ Respond with a helpful message (not JSON this time).`
                                         {tickets.map(ticket => {
                                             const startDate = new Date(ticket.created);
                                             const endDate = new Date(ticket.deadline);
-                                            const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+                                            // const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
 
                                             return (
                                                 <div key={ticket.id} className="flex items-center mb-6 group">
