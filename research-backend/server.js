@@ -1,13 +1,8 @@
 // =============================================================================
-// FIX: Railway "Invalid Host header" Error
+// DIRECT FIX: Replace the beginning of your research-backend/server.js
 // =============================================================================
 
-// PROBLEM: Railway sends specific host headers that Express/Helmet reject
-// SOLUTION: Update your research-backend/server.js with Railway-compatible configuration
-
-// =============================================================================
-// STEP 1: Update the beginning of your research-backend/server.js
-// =============================================================================
+// Copy this EXACT code to replace the beginning of your research-backend/server.js:
 
 const express = require('express');
 const cors = require('cors');
@@ -23,141 +18,88 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // =============================================================================
-// CRITICAL: Railway Host Configuration (Add this FIRST)
+// RAILWAY FIX - MUST BE FIRST (Before any other middleware)
 // =============================================================================
 
 // Trust Railway's proxy setup
 app.set('trust proxy', true);
 
-// Disable Express's host checking for Railway
+// Disable Express host checking entirely for Railway
 app.disable('x-powered-by');
 
-// Add Railway-compatible middleware BEFORE helmet
+// Railway host header middleware - CRITICAL: Must come before helmet
 app.use((req, res, next) => {
-  // Railway compatibility
-  req.headers.host = req.headers.host || 'researchtodoapp-production.up.railway.app';
+  // Force accept Railway host headers
+  const originalHost = req.headers.host;
   
   // Log for debugging
-  console.log('=== REQUEST DEBUG ===');
-  console.log('Host:', req.headers.host);
-  console.log('Origin:', req.headers.origin);
+  console.log('=== RAILWAY DEBUG ===');
+  console.log('Original Host:', originalHost);
   console.log('Method:', req.method);
   console.log('URL:', req.url);
-  console.log('==================');
+  console.log('User-Agent:', req.headers['user-agent']);
+  console.log('X-Forwarded-For:', req.headers['x-forwarded-for']);
+  console.log('X-Forwarded-Host:', req.headers['x-forwarded-host']);
+  console.log('====================');
+  
+  // Override host header validation
+  req.headers.host = 'researchtodoapp-production.up.railway.app';
   
   next();
 });
 
 // =============================================================================
-// STEP 2: Railway-Compatible Helmet Configuration
+// MINIMAL HELMET CONFIG FOR RAILWAY
 // =============================================================================
 
-// Configure Helmet to work with Railway
 app.use(helmet({
-  contentSecurityPolicy: false,  // Disable CSP for Railway
+  contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   dnsPrefetchControl: false,
   frameguard: false,
   hidePoweredBy: true,
-  hsts: false,  // Disable HSTS for Railway
-  ieNoOpen: true,
-  noSniff: true,
+  hsts: false,
+  ieNoOpen: false,
+  noSniff: false,
   originAgentCluster: false,
   permittedCrossDomainPolicies: false,
   referrerPolicy: false,
-  xssFilter: true
+  xssFilter: false
 }));
 
 // =============================================================================
-// STEP 3: Enhanced CORS Configuration
+// RAILWAY-COMPATIBLE CORS
 // =============================================================================
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, etc.)
-    if (!origin) return callback(null, true);
-    
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'https://research-to-do-app.vercel.app',
-      'https://researchtodoapp-production.up.railway.app',
-      'https://stephenresearch.app',
-      'https://www.stephenresearch.app'
-    ];
-    
-    // Check if origin is allowed
-    const isAllowed = allowedOrigins.some(allowedOrigin => {
-      if (typeof allowedOrigin === 'string') {
-        return origin === allowedOrigin;
-      }
-      return allowedOrigin.test(origin);
-    });
-    
-    // Also allow Vercel pattern
-    const isVercel = /^https:\/\/.*\.vercel\.app$/.test(origin);
-    
-    if (isAllowed || isVercel) {
-      callback(null, true);
-    } else {
-      console.log('CORS blocked origin:', origin);
-      callback(null, true); // Allow anyway for Railway compatibility
-    }
+    // Always allow requests for Railway compatibility
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Cache-Control',
-    'X-File-Name'
-  ],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   optionsSuccessStatus: 200
 }));
 
-// =============================================================================
-// STEP 4: Express JSON Parser
-// =============================================================================
-
-app.use(express.json({ 
-  limit: '10mb',
-  strict: false  // Allow Railway flexibility
-}));
-
-app.use(express.urlencoded({ 
-  extended: true,
-  limit: '10mb'
-}));
-
-// =============================================================================
-// STEP 5: Railway-Specific Middleware
-// =============================================================================
-
-// Handle Railway's internal requests
-app.use((req, res, next) => {
-  // Set proper headers for Railway
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  
-  // Handle Railway health checks
-  if (req.url === '/health' || req.url === '/') {
-    return res.json({
-      status: 'OK',
-      service: 'Research Productivity Backend',
-      timestamp: new Date().toISOString(),
-      host: req.headers.host
-    });
-  }
-  
-  next();
+// Handle preflight requests explicitly
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.sendStatus(200);
 });
 
 // =============================================================================
-// STEP 6: Database Connection (Railway Compatible)
+// EXPRESS CONFIGURATION
+// =============================================================================
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// =============================================================================
+// DATABASE CONNECTION
 // =============================================================================
 
 const pool = new Pool({
@@ -168,121 +110,248 @@ const pool = new Pool({
   } : false,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 5000,
 });
 
 // Test database connection
-pool.connect((err) => {
-  if (err) {
-    console.error('Database connection error:', err);
-  } else {
-    console.log('✅ Database connected successfully');
-  }
+pool.on('connect', () => {
+  console.log('✅ Database client connected');
+});
+
+pool.on('error', (err) => {
+  console.error('❌ Database client error:', err);
 });
 
 // =============================================================================
-// STEP 7: Rate Limiting (Railway Compatible)
+// RATE LIMITING (Relaxed for Railway)
 // =============================================================================
 
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 1000, // Increased for Railway
-  message: {
-    error: 'Too many requests, please try again later.'
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000,
+  max: 1000, // Very high limit for Railway
+  message: { error: 'Too many requests' },
   skip: (req) => {
-    // Skip rate limiting for health checks
-    return req.url === '/health' || req.url === '/' || req.url === '/api/health';
+    // Skip rate limiting for health checks and root
+    return req.url === '/' || req.url === '/api/health' || req.url === '/health';
   }
 });
-// Add this BEFORE your other routes
-app.get('/api/setup-database', async (req, res) => {
+
+app.use('/api/', limiter);
+
+// =============================================================================
+// ROOT ENDPOINT (Test Railway Host Header Fix)
+// =============================================================================
+
+app.get('/', (req, res) => {
+  res.json({
+    message: '🚀 Research Productivity Backend API',
+    status: 'Running on Railway',
+    timestamp: new Date().toISOString(),
+    host: req.headers.host,
+    environment: process.env.NODE_ENV || 'development',
+    railway: {
+      originalHost: req.headers['x-forwarded-host'],
+      forwardedFor: req.headers['x-forwarded-for'],
+      userAgent: req.headers['user-agent']
+    },
+    endpoints: {
+      health: '/api/health',
+      setup: '/api/setup-database',
+      auth: '/api/auth/*',
+      tickets: '/api/tickets'
+    }
+  });
+});
+
+// =============================================================================
+// HEALTH CHECK ENDPOINT
+// =============================================================================
+
+app.get('/api/health', async (req, res) => {
   try {
-    console.log('🔧 Starting database initialization...');
-    await initDatabase();
+    // Test database connection
+    const dbTest = await pool.query('SELECT NOW() as current_time');
     
-    // Verify tables were created
+    // Check for existing tables
     const tableCheck = await pool.query(`
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = 'public'
+      ORDER BY table_name
+    `);
+    
+    res.json({
+      status: '✅ OK',
+      service: 'Research Productivity Backend',
+      timestamp: new Date().toISOString(),
+      host: req.headers.host,
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        status: '✅ Connected',
+        currentTime: dbTest.rows[0].current_time,
+        tables: tableCheck.rows.map(r => r.table_name),
+        tableCount: tableCheck.rows.length
+      },
+      railway: {
+        forwardedHost: req.headers['x-forwarded-host'],
+        forwardedFor: req.headers['x-forwarded-for']
+      },
+      uptime: Math.round(process.uptime()),
+      memory: {
+        used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+        total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + 'MB'
+      }
+    });
+  } catch (error) {
+    console.error('❌ Health check failed:', error);
+    res.status(500).json({
+      status: '❌ ERROR',
+      service: 'Research Productivity Backend',
+      timestamp: new Date().toISOString(),
+      host: req.headers.host,
+      error: error.message,
+      database: {
+        status: '❌ Error',
+        error: error.message
+      }
+    });
+  }
+});
+
+// =============================================================================
+// DATABASE INITIALIZATION
+// =============================================================================
+
+const initDatabase = async () => {
+  try {
+    console.log('🔧 Starting database initialization...');
+    
+    // Users table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        full_name VARCHAR(255),
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Tickets table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tickets (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        priority VARCHAR(20) DEFAULT 'Medium',
+        status VARCHAR(20) DEFAULT 'planned',
+        deadline DATE,
+        progress INTEGER DEFAULT 0,
+        estimated_hours INTEGER DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Phases table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS phases (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        start_date DATE,
+        end_date DATE,
+        completed BOOLEAN DEFAULT FALSE,
+        phase_order INTEGER,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Tasks table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id SERIAL PRIMARY KEY,
+        ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+        phase_id INTEGER REFERENCES phases(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        completed BOOLEAN DEFAULT FALSE,
+        deadline DATE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Time tracking table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS time_tracking (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+        ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+        start_time TIMESTAMP WITH TIME ZONE,
+        end_time TIMESTAMP WITH TIME ZONE,
+        duration_seconds INTEGER,
+        date DATE DEFAULT CURRENT_DATE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    console.log('✅ Database initialized successfully');
+  } catch (error) {
+    console.error('❌ Error initializing database:', error);
+    throw error;
+  }
+};
+
+// =============================================================================
+// DATABASE SETUP ENDPOINT
+// =============================================================================
+
+app.get('/api/setup-database', async (req, res) => {
+  try {
+    console.log('🔧 Manual database setup requested...');
+    await initDatabase();
+    
+    // Verify tables were created
+    const tableCheck = await pool.query(`
+      SELECT table_name, 
+             (SELECT COUNT(*) FROM information_schema.columns 
+              WHERE table_name = t.table_name AND table_schema = 'public') as column_count
+      FROM information_schema.tables t
+      WHERE table_schema = 'public'
+      ORDER BY table_name
     `);
     
     res.json({
       success: true,
-      message: 'Database initialized successfully! 🎉',
-      tables: tableCheck.rows.map(r => r.table_name),
-      timestamp: new Date().toISOString()
+      message: '🎉 Database initialized successfully!',
+      timestamp: new Date().toISOString(),
+      tables: tableCheck.rows,
+      summary: {
+        totalTables: tableCheck.rows.length,
+        expectedTables: 5,
+        status: tableCheck.rows.length >= 5 ? '✅ Complete' : '⚠️ Incomplete'
+      }
     });
   } catch (error) {
     console.error('❌ Database setup error:', error);
     res.status(500).json({
       success: false,
       error: error.message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      message: '❌ Database setup failed'
     });
   }
 });
-app.use('/api/', limiter);
 
 // =============================================================================
-// STEP 8: Root and Health Endpoints
+// YOUR EXISTING CODE CONTINUES HERE...
 // =============================================================================
 
-// Root endpoint
-app.get('/', (req, res) => {
-  res.json({
-    message: 'Research Productivity Backend API',
-    status: 'Running on Railway',
-    timestamp: new Date().toISOString(),
-    host: req.headers.host,
-    environment: process.env.NODE_ENV || 'development',
-    endpoints: {
-      health: '/api/health',
-      auth: '/api/auth/*',
-      tickets: '/api/tickets',
-      tasks: '/api/tasks/*',
-      timeTracking: '/api/time-tracking/*',
-      ai: '/api/ai/*',
-      export: '/api/export'
-    }
-  });
-});
-
-// Enhanced health check
-app.get('/api/health', async (req, res) => {
-  try {
-    // Test database connection
-    const dbTest = await pool.query('SELECT NOW()');
-    
-    res.json({
-      status: 'OK',
-      service: 'Research Productivity Backend',
-      timestamp: new Date().toISOString(),
-      host: req.headers.host,
-      origin: req.headers.origin,
-      environment: process.env.NODE_ENV || 'development',
-      database: 'Connected',
-      dbTime: dbTest.rows[0].now,
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      cors: 'Enabled',
-      ssl: process.env.NODE_ENV === 'production' ? 'Enabled' : 'Disabled'
-    });
-  } catch (error) {
-    console.error('Health check failed:', error);
-    res.status(500).json({
-      status: 'ERROR',
-      service: 'Research Productivity Backend',
-      timestamp: new Date().toISOString(),
-      host: req.headers.host,
-      error: error.message,
-      database: 'Error'
-    });
-  }
-});
+// Keep all your existing authentication middleware, routes, etc.
+// Just replace everything ABOVE this comment with the code above
 
 // =============================================================================
 // Continue with your existing authentication middleware and routes...
@@ -330,7 +399,7 @@ app.use((req, res) => {
     url: req.url,
     method: req.method,
     host: req.headers.host,
-    availableEndpoints: ['/api/health', '/api/auth/*', '/api/tickets']
+    availableEndpoints: ['/api/health', '/api/auth/*', '/api/tickets','api/setup-database']
   });
 });
 
