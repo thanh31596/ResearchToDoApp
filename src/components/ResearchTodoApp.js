@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame, Leaf, Zap, LogOut, User } from 'lucide-react';
+import React, { useState, useEffect,useRef } from 'react';
+import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame, Leaf, Zap, LogOut, User, BookOpen } from 'lucide-react';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-
+import { NoteIcon, NoteEditor, NotesSidebar } from './Notes/NoteComponents';
 // Confetti Component
 const Confetti = ({ active, onComplete }) => {
     useEffect(() => {
@@ -87,7 +87,11 @@ const ResearchTodoApp = () => {
     const [newPhaseName, setNewPhaseName] = useState('');
     const [showConfetti, setShowConfetti] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
-
+    // Note-related state
+    const [notes, setNotes] = useState([]);
+    const [editingNote, setEditingNote] = useState(null);
+    const [showNotesSidebar, setShowNotesSidebar] = useState(false);
+    const [noteTarget, setNoteTarget] = useState(null);
     const [chatMessages, setChatMessages] = useState([
         { role: 'assistant', content: 'Hello! I\'m your AI research assistant. I can help you create detailed project plans. Try describing a research task or project you\'d like to work on!' }
     ]);
@@ -101,6 +105,7 @@ const ResearchTodoApp = () => {
         loadTickets();
         loadActiveTimer();
         loadTimeSummary();
+        loadNotes(); // ADD THIS LINE
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -201,6 +206,70 @@ const ResearchTodoApp = () => {
         } catch (error) {
             console.error('Error loading time summary:', error);
         }
+    };
+    // Load notes from backend
+    const loadNotes = async () => {
+        try {
+            const backendNotes = await apiService.getNotes();
+            setNotes(backendNotes || []); // Add fallback to empty array
+        } catch (error) {
+            console.error('Error loading notes:', error);
+            setNotes([]); // Set empty array on error
+        }
+    };
+    
+    // Note functions
+    const handleNoteClick = (type, id, ticketId) => {
+        setNoteTarget({ type, id, ticketId });
+        setEditingNote({ type, id, ticketId });
+    };
+    
+    const handleNoteSave = async (content) => {
+        if (noteTarget) {
+            await loadTickets();
+            await loadNotes();
+            addNotification('📝 Note saved successfully!', 'success');
+        }
+    };
+    
+    const handleNoteClose = () => {
+        setEditingNote(null);
+        setNoteTarget(null);
+    };
+    
+    const handleNoteDelete = async () => {
+        await loadTickets();
+        await loadNotes();
+        setEditingNote(null);
+        setNoteTarget(null);
+        addNotification('🗑️ Note deleted successfully!', 'success');
+    };
+    
+    const openNotesSidebar = () => {
+        setShowNotesSidebar(true);
+    };
+    
+    const handleNoteExport = () => {
+        addNotification('📄 Notes exported successfully!', 'success');
+    };
+    
+    // Check if task or phase has a note
+    const hasNote = (type, id) => {
+        // Safety check: ensure tickets exists and is an array
+        if (!tickets || !Array.isArray(tickets)) {
+            return false;
+        }
+
+        if (type === 'task') {
+            return tickets.some(ticket =>
+                ticket?.tasks?.some(task => task.id === id && task.note?.content?.trim())
+            );
+        } else if (type === 'phase') {
+            return tickets.some(ticket =>
+                ticket?.plan?.phases?.some(phase => phase.id === id && phase.note?.content?.trim())
+            );
+        }
+        return false;
     };
 
     // Add notification helper
@@ -960,7 +1029,21 @@ Respond with a helpful message (not JSON this time).`
                                     </button>
                                 </div>
                             )}
+          
 
+                            <button
+                                onClick={openNotesSidebar}
+                                className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-blue-600 hover:to-indigo-700"
+                                title="View all notes"
+                            >
+                                <BookOpen className="w-5 h-5" />
+                                <span>Notes</span>
+                                {notes.length > 0 && (
+                                    <span className="bg-white/20 text-xs px-2 py-1 rounded-full">
+                                        {notes.length}
+                                    </span>
+                                )}
+                            </button>
                             <button
                                 onClick={() => setShowCreateTask(true)}
                                 className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-purple-600 hover:to-pink-600"
@@ -1187,6 +1270,14 @@ Respond with a helpful message (not JSON this time).`
                                                         </h3>
                                                     )}
                                                     {getPriorityIcon(task.ticketPriority)}
+                                                    <NoteIcon
+                                                        hasNote={hasNote('task', task.id)}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleNoteClick('task', task.id, task.ticketId);
+                                                        }}
+                                                        className="ml-2"
+                                                    />
                                                     {task.deadline === new Date().toISOString().split('T')[0] && (
                                                         <span className="bg-gradient-to-r from-orange-400 to-red-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg animate-bounce">
                                                             Due Today
@@ -1377,28 +1468,38 @@ Respond with a helpful message (not JSON this time).`
                                                                         autoFocus
                                                                     />
                                                                 ) : (
-                                                                    <span
-                                                                        className={`cursor-pointer hover:text-purple-600 transition-colors font-medium ${
-                                                                            phase.completed
-                                                                                ? 'line-through text-gray-500'
-                                                                                : isCurrentPhase
-                                                                                    ? 'text-purple-600 font-bold'
-                                                                                    : isSelectedPhase
-                                                                                        ? 'text-purple-600 font-bold bg-purple-50 px-2 py-1 rounded'
-                                                                                        : 'text-gray-700'
-                                                                        }`}
-                                                                        onClick={() => {
-                                                                            const phaseKey = `${ticket.id}-${phase.id}`;
-                                                                            setSelectedPhase(selectedPhase === phaseKey ? null : phaseKey);
-                                                                        }}
-                                                                        onDoubleClick={() => setEditingPhase(`${ticket.id}-${phase.id}`)}
-                                                                        title={`Click to view tasks • ${completedPhaseTasks}/${phaseTasks.length} tasks completed`}
-                                                                    >
-                                                                        {phase.name}
-                                                                        {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Current</span>}
-                                                                        {isSelectedPhase && <span className="ml-2 text-xs">← Viewing</span>}
-                                                                        <span className="ml-2 text-xs text-gray-400">({completedPhaseTasks}/{phaseTasks.length})</span>
-                                                                    </span>
+                                                                    <>
+                                                                        <span
+                                                                            className={`cursor-pointer hover:text-purple-600 transition-colors font-medium ${
+                                                                                phase.completed
+                                                                                    ? 'line-through text-gray-500'
+                                                                                    : isCurrentPhase
+                                                                                        ? 'text-purple-600 font-bold'
+                                                                                        : isSelectedPhase
+                                                                                            ? 'text-purple-600 font-bold bg-purple-50 px-2 py-1 rounded'
+                                                                                            : 'text-gray-700'
+                                                                            }`}
+                                                                            onClick={() => {
+                                                                                const phaseKey = `${ticket.id}-${phase.id}`;
+                                                                                setSelectedPhase(selectedPhase === phaseKey ? null : phaseKey);
+                                                                            }}
+                                                                            onDoubleClick={() => setEditingPhase(`${ticket.id}-${phase.id}`)}
+                                                                            title={`Click to view tasks • ${completedPhaseTasks}/${phaseTasks.length} tasks completed`}
+                                                                        >
+                                                                            {phase.name}
+                                                                            {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Current</span>}
+                                                                            {isSelectedPhase && <span className="ml-2 text-xs">← Viewing</span>}
+                                                                            <span className="ml-2 text-xs text-gray-400">({completedPhaseTasks}/{phaseTasks.length})</span>
+                                                                        </span>
+                                                                        <NoteIcon
+                                                                            hasNote={hasNote('phase', phase.id)}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleNoteClick('phase', phase.id, ticket.id);
+                                                                            }}
+                                                                            className="ml-2"
+                                                                        />
+                                                                    </>
                                                                 )}
                                                                 <button
                                                                     onClick={() => removePhase(ticket.id, phase.id)}
@@ -1523,13 +1624,23 @@ Respond with a helpful message (not JSON this time).`
                                                                         autoFocus
                                                                     />
                                                                 ) : (
-                                                                    <span
-                                                                        className={`text-sm cursor-pointer hover:text-purple-600 transition-colors flex-1 ${task.completed ? 'line-through text-gray-500' : 'text-gray-700'}`}
-                                                                        onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}`)}
-                                                                        title={`Due: ${task.deadline} • Double-click to edit`}
-                                                                    >
-                                                                        {task.title}
-                                                                    </span>
+                                                                    <>
+                                                                        <span
+                                                                            className={`text-sm cursor-pointer hover:text-purple-600 transition-colors flex-1 ${task.completed ? 'line-through text-gray-500' : 'text-gray-700'}`}
+                                                                            onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}`)}
+                                                                            title={`Due: ${task.deadline} • Double-click to edit`}
+                                                                        >
+                                                                            {task.title}
+                                                                        </span>
+                                                                        <NoteIcon
+                                                                            hasNote={hasNote('task', task.id)}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                handleNoteClick('task', task.id, ticket.id);
+                                                                            }}
+                                                                            className="ml-2"
+                                                                        />
+                                                                    </>
                                                                 )}
                                                                 <div className="flex items-center space-x-1">
                                                                     {!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== ticket.id) ? (
@@ -2398,8 +2509,60 @@ Respond with a helpful message (not JSON this time).`
                     <MessageCircle className="w-8 h-8" />
                 </button>
             </div>
+            {/* Note Editor */}
+            {editingNote && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="w-full max-w-2xl">
+                        <NoteEditor
+                            note={(() => {
+                                // Safety check: ensure tickets exists and is an array
+                                if (!tickets || !Array.isArray(tickets)) {
+                                    return null;
+                                }
 
-            <style jsx>{`
+                                if (editingNote.type === 'task') {
+                                    const task = tickets
+                                        .filter(t => t && t.tasks && Array.isArray(t.tasks))
+                                        .flatMap(t => t.tasks)
+                                        .find(task => task && task.id === editingNote.id);
+                                    return task?.note || null;
+                                } else if (editingNote.type === 'phase') {
+                                    const phase = tickets
+                                        .filter(t => t && t.plan && t.plan.phases && Array.isArray(t.plan.phases))
+                                        .flatMap(t => t.plan.phases)
+                                        .find(phase => phase && phase.id === editingNote.id);
+                                    return phase?.note || null;
+                                }
+                                return null;
+                            })()}
+                            onSave={handleNoteSave}
+                            onClose={handleNoteClose}
+                            onDelete={handleNoteDelete}
+                            type={editingNote.type}
+                            itemId={editingNote.id}
+                            ticketId={editingNote.ticketId}
+                            placeholder={`Add your ${editingNote.type} notes here...`}
+                        />
+                    </div>
+                </div>
+            )}
+
+            {/* Notes Sidebar */}
+            <NotesSidebar
+                isOpen={showNotesSidebar}
+                onClose={() => setShowNotesSidebar(false)}
+                notes={notes || []}
+                onNoteClick={(note) => {
+                    if (note && note.task_id) {
+                        handleNoteClick('task', note.task_id, note.ticket_id);
+                    } else if (note && note.phase_id) {
+                        handleNoteClick('phase', note.phase_id, note.ticket_id);
+                    }
+                    setShowNotesSidebar(false);
+                }}
+                onExport={handleNoteExport}
+            />
+            <style>{`
                 @keyframes float {
                     0%, 100% { transform: translateY(0px) rotate(0deg); }
                     50% { transform: translateY(-20px) rotate(180deg); }

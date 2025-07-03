@@ -291,7 +291,32 @@ const initDatabase = async () => {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Notes table - ADD THIS NEW TABLE
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS notes (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        task_id INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+        phase_id INTEGER REFERENCES phases(id) ON DELETE CASCADE,
+        ticket_id INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+        content TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT notes_reference_check CHECK (
+          (task_id IS NOT NULL AND phase_id IS NULL) OR 
+          (task_id IS NULL AND phase_id IS NOT NULL)
+        )
+      )
+    `);
 
+    // Index for performance
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_notes_user_task ON notes(user_id, task_id);
+    `);
+    
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_notes_user_phase ON notes(user_id, phase_id);
+    `);
     console.log('✅ Database initialized successfully');
   } catch (error) {
     console.error('❌ Error initializing database:', error);
@@ -484,7 +509,7 @@ app.get('/api/tickets', authenticateToken, async (req, res) => {
       ORDER BY t.created_at DESC
     `, [req.user.userId]);
 
-    // Get tasks for each ticket
+    // Get tasks and notes for each ticket
     for (let ticket of ticketsResult.rows) {
       const tasksResult = await pool.query(`
         SELECT id, title, completed, deadline, phase_id
@@ -494,6 +519,36 @@ app.get('/api/tickets', authenticateToken, async (req, res) => {
       `, [ticket.id]);
       
       ticket.tasks = tasksResult.rows;
+
+      // Get notes for phases
+      const phaseNotesResult = await pool.query(`
+        SELECT n.*, p.id as phase_id
+        FROM notes n
+        JOIN phases p ON n.phase_id = p.id
+        WHERE p.ticket_id = $1
+      `, [ticket.id]);
+
+      // Get notes for tasks
+      const taskNotesResult = await pool.query(`
+        SELECT n.*, t.id as task_id
+        FROM notes n
+        JOIN tasks t ON n.task_id = t.id
+        WHERE t.ticket_id = $1
+      `, [ticket.id]);
+
+      // Add notes to phases
+      if (ticket.phases) {
+        ticket.phases.forEach(phase => {
+          const phaseNote = phaseNotesResult.rows.find(n => n.phase_id === phase.id);
+          phase.note = phaseNote || null;
+        });
+      }
+
+      // Add notes to tasks
+      ticket.tasks.forEach(task => {
+        const taskNote = taskNotesResult.rows.find(n => n.task_id === task.id);
+        task.note = taskNote || null;
+      });
     }
 
     res.json(ticketsResult.rows);
@@ -771,7 +826,225 @@ app.get('/api/time-tracking/summary', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// =============================================================================
+// NOTES ROUTES - ADD THESE NEW ROUTES
+// =============================================================================
 
+// Get all notes for a user
+app.get('/api/notes', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT n.*, 
+             t.title as task_title,
+             p.name as phase_name,
+             tk.title as ticket_title
+      FROM notes n
+      LEFT JOIN tasks t ON n.task_id = t.id
+      LEFT JOIN phases p ON n.phase_id = p.id
+      LEFT JOIN tickets tk ON n.ticket_id = tk.id
+      WHERE n.user_id = $1
+      ORDER BY n.updated_at DESC
+    `, [req.user.userId]);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching notes:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get notes for a specific task or phase
+app.get('/api/notes/:type/:id', authenticateToken, async (req, res) => {
+  try {
+    const { type, id } = req.params;
+
+    let query, params;
+    if (type === 'task') {
+      query = `
+        SELECT n.* FROM notes n
+        JOIN tasks t ON n.task_id = t.id
+        JOIN tickets tk ON t.ticket_id = tk.id
+        WHERE n.task_id = $1 AND tk.user_id = $2
+      `;
+      params = [id, req.user.userId];
+    } else if (type === 'phase') {
+      query = `
+        SELECT n.* FROM notes n
+        JOIN phases p ON n.phase_id = p.id
+        JOIN tickets tk ON p.ticket_id = tk.id
+        WHERE n.phase_id = $1 AND tk.user_id = $2
+      `;
+      params = [id, req.user.userId];
+    } else {
+      return res.status(400).json({ error: 'Invalid note type' });
+    }
+
+    const result = await pool.query(query, params);
+    res.json(result.rows[0] || null);
+  } catch (error) {
+    console.error('Error fetching note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create or update a note
+app.post('/api/notes', authenticateToken, [
+  body('content').trim(),
+  body('taskId').optional().isInt(),
+  body('phaseId').optional().isInt(),
+  body('ticketId').isInt()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { content, taskId, phaseId, ticketId } = req.body;
+
+    // Validate that either taskId or phaseId is provided, but not both
+    if ((!taskId && !phaseId) || (taskId && phaseId)) {
+      return res.status(400).json({ error: 'Must provide either taskId or phaseId, but not both' });
+    }
+
+    // Check if note already exists
+    let existingNote;
+    if (taskId) {
+      existingNote = await pool.query(`
+        SELECT n.id FROM notes n
+        JOIN tasks t ON n.task_id = t.id
+        JOIN tickets tk ON t.ticket_id = tk.id
+        WHERE n.task_id = $1 AND tk.user_id = $2
+      `, [taskId, req.user.userId]);
+    } else {
+      existingNote = await pool.query(`
+        SELECT n.id FROM notes n
+        JOIN phases p ON n.phase_id = p.id
+        JOIN tickets tk ON p.ticket_id = tk.id
+        WHERE n.phase_id = $1 AND tk.user_id = $2
+      `, [phaseId, req.user.userId]);
+    }
+
+    let result;
+    if (existingNote.rows.length > 0) {
+      // Update existing note
+      result = await pool.query(`
+        UPDATE notes 
+        SET content = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+        RETURNING *
+      `, [content, existingNote.rows[0].id]);
+    } else {
+      // Create new note
+      result = await pool.query(`
+        INSERT INTO notes (user_id, task_id, phase_id, ticket_id, content)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `, [req.user.userId, taskId || null, phaseId || null, ticketId, content]);
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating/updating note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update a note
+app.put('/api/notes/:id', authenticateToken, [
+  body('content').trim()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { content } = req.body;
+
+    const result = await pool.query(`
+      UPDATE notes 
+      SET content = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2 AND user_id = $3
+      RETURNING *
+    `, [content, id, req.user.userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete a note
+app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+        'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING id',
+        [id, req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    res.json({ message: 'Note deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Export all notes as markdown
+app.get('/api/notes/export', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT n.*, 
+             t.title as task_title,
+             p.name as phase_name,
+             tk.title as ticket_title
+      FROM notes n
+      LEFT JOIN tasks t ON n.task_id = t.id
+      LEFT JOIN phases p ON n.phase_id = p.id
+      LEFT JOIN tickets tk ON n.ticket_id = tk.id
+      WHERE n.user_id = $1 AND n.content != ''
+      ORDER BY tk.title, p.phase_order, t.created_at
+    `, [req.user.userId]);
+
+    let markdown = `# Research Notes Export\n\n`;
+    markdown += `Generated on: ${new Date().toLocaleDateString()}\n\n`;
+
+    let currentTicket = '';
+    for (const note of result.rows) {
+      if (note.ticket_title !== currentTicket) {
+        currentTicket = note.ticket_title;
+        markdown += `## ${currentTicket}\n\n`;
+      }
+
+      const itemType = note.task_title ? 'Task' : 'Phase';
+      const itemTitle = note.task_title || note.phase_name;
+
+      markdown += `### ${itemType}: ${itemTitle}\n\n`;
+      markdown += `${note.content}\n\n`;
+      markdown += `*Last updated: ${new Date(note.updated_at).toLocaleDateString()}*\n\n`;
+      markdown += `---\n\n`;
+    }
+
+    res.setHeader('Content-Type', 'text/markdown');
+    res.setHeader('Content-Disposition', 'attachment; filename="research-notes.md"');
+    res.send(markdown);
+  } catch (error) {
+    console.error('Error exporting notes:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // =============================================================================
 // AI INTEGRATION ROUTE (GEMINI)
 // =============================================================================
@@ -793,9 +1066,9 @@ app.post('/api/ai/generate-plan', authenticateToken, async (req, res) => {
       body: JSON.stringify({
         contents: [{
           parts: [{
-            text: `You are an AI research productivity assistant. The user wants to create a new research project/task: "${description}"
+            text: `You are an AI research productivity assistant to help guiding users to have better research progress, you are required to be detailed and specific and realistic. The user wants to create a new research project/task: "${description}"
 
-Create a comprehensive project plan with the following structure. 
+Create a comprehensive and instructive project plan with the following structure. 
 
 CRITICAL: Respond with ONLY valid JSON. Do not include markdown code blocks, backticks, or any other formatting. Just pure JSON.
 
@@ -803,7 +1076,7 @@ CRITICAL: Respond with ONLY valid JSON. Do not include markdown code blocks, bac
   "title": "Clear, concise project title",
   "description": "Detailed description of the project",
   "priority": "High|Medium|Low",
-  "deadline": "YYYY-MM-DD (estimate a reasonable deadline 1-6 months from now)",
+  "deadline": "YYYY-MM-DD (estimate a reasonable deadline based on the requirements from the description provided by the user from now.)",
   "estimatedHours": number (total estimated hours),
   "phases": [
     {
@@ -817,7 +1090,7 @@ CRITICAL: Respond with ONLY valid JSON. Do not include markdown code blocks, bac
   "tasks": [
     {
       "id": 1,
-      "title": "Specific actionable task",
+      "title": "Specific actionable task, make it sound instructive",
       "phase": 1,
       "completed": false,
       "deadline": "YYYY-MM-DD"
@@ -825,13 +1098,15 @@ CRITICAL: Respond with ONLY valid JSON. Do not include markdown code blocks, bac
   ]
 }
 
+
 Rules:
-- Create 3-5 logical phases that build upon each other
+- Create 3-10 logical phases that build upon each other
 - Each phase should have 5-15 specific, actionable tasks
 - Deadlines should be realistic and well-spaced
-- Consider research workflows: literature review → methodology → experimentation → analysis → writing
+- Consider research cycle workflows: Background research → Exploration Analysis → Problem Formulation → literature review → methodology → experimentation → analysis → writing
 - Tasks should be specific enough to complete in 1-4 hours each
-- Start dates should be today (${new Date().toISOString().split('T')[0]}) or later
+- Start dates should be today (${new Date().toISOString().split('T')[0]}) 
+- Each task MUST have a deadline in YYYY-MM-DD format
 - Make it comprehensive but realistic for academic research
 
 IMPORTANT: Return ONLY the JSON object. No markdown formatting, no backticks, no explanatory text.`

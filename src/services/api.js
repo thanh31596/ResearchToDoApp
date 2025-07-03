@@ -129,12 +129,47 @@ class ApiService {
         });
     }
 
-    // async updateTask(taskId, updates) {
-    //     return this.apiCall(`/tasks/${taskId}`, {
-    //         method: 'PUT',
-    //         body: JSON.stringify(updates),
-    //     });
-    // }
+    // Notes methods
+    async getNotes() {
+        return this.apiCall('/notes');
+    }
+
+    async getNote(type, id) {
+        return this.apiCall(`/notes/${type}/${id}`);
+    }
+
+    async createOrUpdateNote(noteData) {
+        return this.apiCall('/notes', {
+            method: 'POST',
+            body: JSON.stringify(noteData),
+        });
+    }
+
+    async updateNote(noteId, updates) {
+        return this.apiCall(`/notes/${noteId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updates),
+        });
+    }
+
+    async deleteNote(noteId) {
+        return this.apiCall(`/notes/${noteId}`, {
+            method: 'DELETE',
+        });
+    }
+
+    async exportNotes() {
+        const url = `${this.API_BASE_URL}/notes/export`;
+        const response = await fetch(url, {
+            headers: this.getHeaders(),
+        });
+        
+        if (!response.ok) {
+            throw new Error('Export failed');
+        }
+        
+        return response.blob();
+    }
 
     // Time tracking methods
     async startTimer(taskId, ticketId) {
