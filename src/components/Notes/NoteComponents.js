@@ -28,7 +28,7 @@ const renderMarkdown = (text) => {
         // LaTeX equations (simple $ ... $ support)
         .replace(/\$(.*?)\$/g, '<span class="bg-yellow-100 px-1 py-0.5 rounded text-sm font-mono">$1</span>')
         // Bullet points
-        .replace(/^[\s]*[-\*\+][\s]+(.*$)/gm, '<li class="ml-4">$1</li>')
+        .replace(/^[\s]*[-*+][\s]+(.*$)/gm, '<li class="ml-4">$1</li>')
         // Line breaks
         .replace(/\n/g, '<br>');
 };
