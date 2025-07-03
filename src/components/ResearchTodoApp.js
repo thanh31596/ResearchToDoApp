@@ -3,6 +3,27 @@ import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, 
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { NoteIcon, NoteEditor, NotesSidebar } from './Notes/NoteComponents';
+// Add this at the top of your component
+const formatDateForInput = (dateString) => {
+    if (!dateString) return '';
+
+    // If it's already in the correct format (YYYY-MM-DD), return as is
+    if (typeof dateString === 'string' && dateString.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        return dateString;
+    }
+
+    // Handle ISO datetime strings and Date objects
+    try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return '';
+
+        // Return in YYYY-MM-DD format
+        return date.toISOString().split('T')[0];
+    } catch (error) {
+        console.error('Error formatting date:', error);
+        return '';
+    }
+};
 // Confetti Component
 const Confetti = ({ active, onComplete }) => {
     useEffect(() => {
@@ -145,7 +166,7 @@ const ResearchTodoApp = () => {
                 title: ticket.title,
                 description: ticket.description,
                 priority: ticket.priority,
-                deadline: ticket.deadline,
+                deadline: formatDateForInput(ticket.deadline),
                 created: ticket.created_at?.split('T')[0],
                 status: ticket.status,
                 progress: ticket.progress,
@@ -154,7 +175,8 @@ const ResearchTodoApp = () => {
                     phases: ticket.phases || [],
                     tasks: (ticket.tasks || []).map(task => ({
                         ...task,
-                        phase: task.phase_id // Map phase_id to phase for frontend compatibility
+                        phase: task.phase_id, // Map phase_id to phase for frontend compatibility
+                        deadline: formatDateForInput(task.deadline)
                     }))
                 }
             }));
@@ -699,7 +721,16 @@ Respond with a helpful message (not JSON this time).`
         const allTasks = tickets.flatMap(ticket =>
             ticket.plan.tasks.map(task => ({ ...task, ticketId: ticket.id, projectName: ticket.title }))
         );
-        return allTasks.filter(task => task.deadline === dateStr);
+
+        // ✅ Debug logging
+        console.log('Looking for tasks on date:', dateStr);
+        console.log('All tasks:', allTasks);
+        console.log('Tasks with deadlines:', allTasks.filter(task => task.deadline));
+
+        const matchingTasks = allTasks.filter(task => task.deadline === dateStr);
+        console.log('Matching tasks for', dateStr, ':', matchingTasks);
+
+        return matchingTasks;
     };
 
     // Get the most relevant tasks to show (smart logic)
@@ -2273,7 +2304,7 @@ Respond with a helpful message (not JSON this time).`
                                     <label className="block text-sm font-medium text-gray-700 mb-2">Deadline</label>
                                     <input
                                         type="date"
-                                        value={editingTicket.deadline}
+                                        value={formatDateForInput(editingTicket.deadline)}
                                         onChange={(e) => setEditingTicket({ ...editingTicket, deadline: e.target.value })}
                                         className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white/70 backdrop-blur-sm"
                                     />
