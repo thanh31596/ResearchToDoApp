@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame, Leaf, Zap, LogOut, User, BookOpen } from 'lucide-react';
+import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame,  LogOut, User, BookOpen } from 'lucide-react';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { NoteIcon, NoteEditor, NotesSidebar } from './Notes/NoteComponents';
@@ -121,6 +121,7 @@ const ResearchTodoApp = () => {
     const [showChat, setShowChat] = useState(false);
     const [notifications, setNotifications] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [calendarProjectFilter, setCalendarProjectFilter] = useState('all'); // 'all' or specific project ID
 
     // Load data from backend on component mount
     useEffect(() => {
@@ -365,7 +366,51 @@ const ResearchTodoApp = () => {
             addNotification('Failed to update ticket', 'error');
         }
     };
+    // Update task deadline
+    const updateTaskDeadline = async (ticketId, taskId, newDeadline) => {
+        try {
+            // Update local state immediately
+            setTickets(prev => prev.map(ticket =>
+                ticket.id === ticketId
+                    ? { ...ticket, plan: { ...ticket.plan, tasks: ticket.plan.tasks.map(task =>
+                                task.id === taskId ? { ...task, deadline: newDeadline } : task
+                            ) } }
+                    : ticket
+            ));
 
+            // Update backend
+            await apiService.updateTask(taskId, { deadline: newDeadline });
+            addNotification('Task deadline updated', 'success');
+        } catch (error) {
+            console.error('Error updating task deadline:', error);
+            addNotification('Failed to update task deadline', 'error');
+            // Reload to sync with backend
+            await loadTickets();
+        }
+    };
+
+    // Update phase name
+    const updatePhaseName = async (ticketId, phaseId, newName) => {
+        try {
+            // Update local state immediately
+            setTickets(prev => prev.map(ticket =>
+                ticket.id === ticketId
+                    ? { ...ticket, plan: { ...ticket.plan, phases: ticket.plan.phases.map(phase =>
+                                phase.id === phaseId ? { ...phase, name: newName } : phase
+                            ) } }
+                    : ticket
+            ));
+
+            // Update backend
+            await apiService.updatePhase(phaseId, { name: newName });
+            addNotification('Phase name updated', 'success');
+        } catch (error) {
+            console.error('Error updating phase name:', error);
+            addNotification('Failed to update phase name', 'error');
+            // Reload to sync with backend
+            await loadTickets();
+        }
+    };
     // Delete ticket
     const deleteTicket = async (ticketId) => {
         if (window.confirm('Are you sure you want to delete this ticket? This action cannot be undone.')) {
@@ -723,21 +768,34 @@ Respond with a helpful message (not JSON this time).`
     const getTasksForDate = (date) => {
         if (!date) return [];
         const dateStr = date.toISOString().split('T')[0];
-        const allTasks = tickets.flatMap(ticket =>
-            ticket.plan.tasks.map(task => ({ ...task, ticketId: ticket.id, projectName: ticket.title }))
+
+        // Filter tickets based on calendar project filter
+        const filteredTickets = calendarProjectFilter === 'all'
+            ? tickets
+            : tickets.filter(ticket => ticket.id === parseInt(calendarProjectFilter));
+
+        const allTasks = filteredTickets.flatMap(ticket =>
+            ticket.plan.tasks.map(task => ({
+                ...task,
+                ticketId: ticket.id,
+                projectName: ticket.title,
+                projectColor: getProjectColor(tickets.indexOf(tickets.find(t => t.id === ticket.id)))
+            }))
         );
 
-        // ✅ Debug logging
-        console.log('Looking for tasks on date:', dateStr);
-        console.log('All tasks:', allTasks);
-        console.log('Tasks with deadlines:', allTasks.filter(task => task.deadline));
-
         const matchingTasks = allTasks.filter(task => task.deadline === dateStr);
-        console.log('Matching tasks for', dateStr, ':', matchingTasks);
-
         return matchingTasks;
     };
-
+    const getProjectColor = (index) => {
+        const projectColors = [
+            { bg: 'from-purple-400 to-indigo-500', text: 'text-purple-700' },
+            { bg: 'from-pink-400 to-rose-500', text: 'text-pink-700' },
+            { bg: 'from-blue-400 to-cyan-500', text: 'text-blue-700' },
+            { bg: 'from-green-400 to-emerald-500', text: 'text-green-700' },
+            { bg: 'from-yellow-400 to-orange-500', text: 'text-yellow-700' }
+        ];
+        return projectColors[index % projectColors.length];
+    };
     // Get the most relevant tasks to show (smart logic)
     const getRelevantTasks = (ticket) => {
         const allTasks = ticket.plan.tasks;
@@ -862,71 +920,6 @@ Respond with a helpful message (not JSON this time).`
         }
     };
 
-    // Get smart "Today's Focus" tasks
-    const getTodaysFocusTasks = () => {
-        const today = new Date().toISOString().split('T')[0];
-        const allTasks = tickets.flatMap(ticket =>
-            ticket.plan.tasks.map(task => ({ ...task, ticketId: ticket.id, projectName: ticket.title, ticketPriority: ticket.priority }))
-        );
-
-        // Priority 1: Tasks due today
-        const dueTodayTasks = allTasks.filter(task => task.deadline === today && !task.completed);
-
-        // Priority 2: Overdue tasks
-        const overdueTasks = allTasks.filter(task =>
-            !task.completed && new Date(task.deadline) < new Date(today)
-        );
-
-        // Priority 3: High priority project tasks that are current
-        const highPriorityCurrentTasks = [];
-        tickets.filter(ticket => ticket.priority === 'High').forEach(ticket => {
-            const relevantTasks = getRelevantTasks(ticket).slice(0, 2); // Take top 2 from each high priority project
-            relevantTasks.forEach(task => {
-                if (!task.completed) {
-                    highPriorityCurrentTasks.push({
-                        ...task,
-                        ticketId: ticket.id,
-                        projectName: ticket.title,
-                        ticketPriority: ticket.priority
-                    });
-                }
-            });
-        });
-
-        // Priority 4: Current phase tasks from other projects
-        const currentPhaseTasks = [];
-        tickets.filter(ticket => ticket.priority !== 'High').forEach(ticket => {
-            const relevantTasks = getRelevantTasks(ticket).slice(0, 1); // Take top 1 from each other project
-            relevantTasks.forEach(task => {
-                if (!task.completed) {
-                    currentPhaseTasks.push({
-                        ...task,
-                        ticketId: ticket.id,
-                        projectName: ticket.title,
-                        ticketPriority: ticket.priority
-                    });
-                }
-            });
-        });
-
-        // Combine and deduplicate
-        const combinedTasks = [...dueTodayTasks, ...overdueTasks, ...highPriorityCurrentTasks, ...currentPhaseTasks];
-        const uniqueTasks = combinedTasks.filter((task, index, self) =>
-            index === self.findIndex(t => t.id === task.id && t.ticketId === task.ticketId)
-        );
-
-        // Sort by priority: due today > overdue > high priority > others
-        return uniqueTasks.sort((a, b) => {
-            if (a.deadline === today && b.deadline !== today) return -1;
-            if (a.deadline !== today && b.deadline === today) return 1;
-            if (new Date(a.deadline) < new Date(today) && new Date(b.deadline) >= new Date(today)) return -1;
-            if (new Date(a.deadline) >= new Date(today) && new Date(b.deadline) < new Date(today)) return 1;
-            if (a.ticketPriority === 'High' && b.ticketPriority !== 'High') return -1;
-            if (a.ticketPriority !== 'High' && b.ticketPriority === 'High') return 1;
-            return 0;
-        }).slice(0, 5); // Show top 5 priority tasks
-    };
-
     const formatTime = (seconds) => {
         const hours = Math.floor(seconds / 3600);
         const minutes = Math.floor((seconds % 3600) / 60);
@@ -945,14 +938,14 @@ Respond with a helpful message (not JSON this time).`
         return Object.values(timeSpent).reduce((total, time) => total + time, 0);
     };
 
-    const getPriorityIcon = (priority) => {
-        switch (priority) {
-            case 'High': return <Flame className="w-4 h-4 text-red-500" />;
-            case 'Medium': return <Zap className="w-4 h-4 text-yellow-500" />;
-            case 'Low': return <Leaf className="w-4 h-4 text-green-500" />;
-            default: return null;
-        }
-    };
+    // const getPriorityIcon = (priority) => {
+    //     switch (priority) {
+    //         case 'High': return <Flame className="w-4 h-4 text-red-500" />;
+    //         case 'Medium': return <Zap className="w-4 h-4 text-yellow-500" />;
+    //         case 'Low': return <Leaf className="w-4 h-4 text-green-500" />;
+    //         default: return null;
+    //     }
+    // };
 
     const getPriorityColor = (priority) => {
         switch (priority) {
@@ -982,7 +975,102 @@ Respond with a helpful message (not JSON this time).`
     //         default: return 'bg-gray-100 text-gray-800';
     //     }
     // };
+// Task Item Component for Today's Focus
+    const TaskItem = ({ task }) => {
+        const [isHovered, setIsHovered] = useState(false);
 
+        return (
+            <div
+                className="bg-gradient-to-br from-white/80 to-purple-50/80 backdrop-blur-sm rounded-xl p-4 border border-white/50 shadow-md hover:shadow-lg transform hover:scale-[1.01] transition-all duration-300"
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+            >
+                <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-2">
+                            <button
+                                onClick={() => toggleTaskComplete(task.ticketId, task.id)}
+                                className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-300 transform hover:scale-110 ${
+                                    task.completed
+                                        ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400 shadow-md'
+                                        : 'border-gray-300 hover:border-purple-400 hover:shadow-sm'
+                                }`}
+                            >
+                                {task.completed && <CheckCircle className="w-3 h-3 text-white" />}
+                            </button>
+                            {editingTask === `${task.ticketId}-${task.id}` ? (
+                                <input
+                                    type="text"
+                                    value={task.title}
+                                    onChange={(e) => {
+                                        setTickets(prev => prev.map(ticket =>
+                                            ticket.id === task.ticketId
+                                                ? { ...ticket, plan: { ...ticket.plan, tasks: ticket.plan.tasks.map(t => t.id === task.id ? { ...t, title: e.target.value } : t) } }
+                                                : ticket
+                                        ));
+                                    }}
+                                    onBlur={() => setEditingTask(null)}
+                                    onKeyPress={(e) => e.key === 'Enter' && setEditingTask(null)}
+                                    className="font-medium text-gray-800 border-b border-purple-300 focus:outline-none bg-transparent flex-1"
+                                    autoFocus
+                                />
+                            ) : (
+                                <h3
+                                    className={`font-medium cursor-pointer hover:text-purple-600 transition-colors flex-1 ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}
+                                    onDoubleClick={() => setEditingTask(`${task.ticketId}-${task.id}`)}
+                                    title="Double-click to edit"
+                                >
+                                    {task.title}
+                                </h3>
+                            )}
+                            <NoteIcon
+                                hasNote={hasNote('task', task.id)}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNoteClick('task', task.id, task.ticketId);
+                                }}
+                            />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-4 text-xs text-gray-600">
+                            <span className="text-purple-600 font-medium bg-purple-100 px-2 py-1 rounded">
+                                {task.projectName}
+                            </span>
+                                <span className="flex items-center">
+                                <Calendar className="w-3 h-3 mr-1" />
+                                    {task.deadline}
+                            </span>
+                                {timeSpent[`${task.ticketId}-${task.id}`] && (
+                                    <span className="text-blue-600 flex items-center">
+                                    <Clock className="w-3 h-3 mr-1" />
+                                        {formatTime(timeSpent[`${task.ticketId}-${task.id}`])}
+                                </span>
+                                )}
+                            </div>
+
+                            <div className="flex items-center space-x-2">
+                                {(!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== task.ticketId)) && isHovered && (
+                                    <button
+                                        onClick={() => startTimer(task.id, task.ticketId)}
+                                        className="bg-gradient-to-r from-green-400 to-emerald-500 text-white p-2 rounded-lg hover:shadow-md transform hover:scale-110 transition-all duration-300"
+                                        title="Start timer"
+                                    >
+                                        <Clock className="w-3 h-3" />
+                                    </button>
+                                )}
+                                {activeTimer?.taskId === task.id && activeTimer?.ticketId === task.ticketId && (
+                                    <span className="text-green-600 animate-pulse text-xs bg-green-100 px-2 py-1 rounded-full">
+                                    ⏱️ Tracking
+                                </span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
     // Show loading state
     if (loading) {
         return (
@@ -1013,7 +1101,7 @@ Respond with a helpful message (not JSON this time).`
     }
 
     // Get today's focus tasks using smart logic
-    const todaysFocusTasks = getTodaysFocusTasks();
+    // const todaysFocusTasks = getTodaysFocusTasks();
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-indigo-50 relative overflow-hidden">
@@ -1092,7 +1180,7 @@ Respond with a helpful message (not JSON this time).`
                                 {[
                                     { key: 'daily', label: 'Daily', icon: Clock },
                                     { key: 'calendar', label: 'Calendar', icon: Calendar },
-                                    { key: 'projects', label: 'Projects', icon: Target },
+                                    // { key: 'projects', label: 'Projects', icon: Target },
                                     { key: 'analytics', label: 'Analytics', icon: TrendingUp }
                                 ].map(({ key, label, icon: Icon }) => (
                                     <button
@@ -1252,565 +1340,521 @@ Respond with a helpful message (not JSON this time).`
             {/* Main Content */}
             <main className="max-w-7xl mx-auto px-6 py-8 relative z-10">
                 {currentView === 'daily' && (
-                    <div className="space-y-8">
-                        {/* Today's Focus */}
-                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30 transform hover:scale-[1.02] transition-all duration-300">
-                            <div className="flex items-center justify-between mb-8">
-                                <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                                    Today's Focus
-                                </h2>
-                                <div className="text-sm text-gray-600 bg-white/50 px-4 py-2 rounded-xl">
-                                    {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                    <div className="grid grid-cols-10 gap-6 h-[calc(100vh-200px)]">
+                        {/* Left Column - Projects Overview */}
+                        <div className="col-span-7 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="mb-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h2 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                        Projects Overview
+                                    </h2>
+                                    <button
+                                        onClick={() => setShowCreateTask(true)}
+                                        className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 py-2 rounded-xl font-medium hover:shadow-lg transform hover:scale-105 transition-all duration-300 flex items-center space-x-1 text-sm"
+                                    >
+                                        <Plus className="w-4 h-4" />
+                                        <span>New Project</span>
+                                    </button>
                                 </div>
-                            </div>
 
-                            <div className="grid gap-6">
-                                {todaysFocusTasks.length > 0 ? todaysFocusTasks.map(task => (
-                                    <div key={`${task.ticketId}-${task.id}`} className="bg-gradient-to-br from-white/80 to-purple-50/80 backdrop-blur-sm rounded-2xl p-6 border border-white/50 shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300">
-                                        <div className="flex items-start justify-between">
-                                            <div className="flex-1">
-                                                <div className="flex items-center space-x-4 mb-3">
-                                                    <button
-                                                        onClick={() => toggleTaskComplete(task.ticketId, task.id)}
-                                                        className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all duration-300 transform hover:scale-110 ${
-                                                            task.completed
-                                                                ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400 shadow-lg'
-                                                                : 'border-gray-300 hover:border-purple-400 hover:shadow-md'
-                                                        }`}
-                                                    >
-                                                        {task.completed && <CheckCircle className="w-4 h-4 text-white" />}
-                                                    </button>
-                                                    {editingTask === `${task.ticketId}-${task.id}` ? (
-                                                        <input
-                                                            type="text"
-                                                            value={task.title}
-                                                            onChange={(e) => {
-                                                                // Update task title in local state
-                                                                setTickets(prev => prev.map(ticket =>
-                                                                    ticket.id === task.ticketId
-                                                                        ? { ...ticket, plan: { ...ticket.plan, tasks: ticket.plan.tasks.map(t => t.id === task.id ? { ...t, title: e.target.value } : t) } }
-                                                                        : ticket
-                                                                ));
-                                                            }}
-                                                            onBlur={() => setEditingTask(null)}
-                                                            onKeyPress={(e) => e.key === 'Enter' && setEditingTask(null)}
-                                                            className="font-semibold text-lg text-gray-800 border-b border-purple-300 focus:outline-none bg-transparent"
-                                                            autoFocus
-                                                        />
-                                                    ) : (
-                                                        <h3
-                                                            className={`font-semibold text-lg cursor-pointer hover:text-purple-600 hover:underline transition-colors ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}
-                                                            onDoubleClick={() => setEditingTask(`${task.ticketId}-${task.id}`)}
-                                                            title="Double-click to edit"
-                                                        >
-                                                            {task.title}
-                                                        </h3>
-                                                    )}
-                                                    {getPriorityIcon(task.ticketPriority)}
-                                                    <NoteIcon
-                                                        hasNote={hasNote('task', task.id)}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleNoteClick('task', task.id, task.ticketId);
-                                                        }}
-                                                        className="ml-2"
-                                                    />
-                                                    {task.deadline === new Date().toISOString().split('T')[0] && (
-                                                        <span className="bg-gradient-to-r from-orange-400 to-red-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg animate-bounce">
-                                                            Due Today
-                                                        </span>
-                                                    )}
-                                                    {new Date(task.deadline) < new Date() && !task.completed && (
-                                                        <span className="bg-gradient-to-r from-red-400 to-pink-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg animate-pulse">
-                                                            Overdue
-                                                        </span>
-                                                    )}
-                                                    {task.ticketPriority === 'High' && (
-                                                        <span className="bg-gradient-to-r from-red-400 to-pink-400 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg">
-                                                            High Priority
-                                                        </span>
-                                                    )}
-                                                </div>
+                                {/* Compact Project Cards */}
+                                <div className="space-y-4">
+                                    {tickets.map((ticket, index) => {
+                                        const projectColors = [
+                                            'from-purple-500 to-indigo-600',
+                                            'from-pink-500 to-rose-600',
+                                            'from-blue-500 to-cyan-600',
+                                            'from-green-500 to-emerald-600',
+                                            'from-yellow-500 to-orange-600'
+                                        ];
+                                        const colorClass = projectColors[index % projectColors.length];
+                                        const currentPhase = ticket.plan.phases.find(phase => !phase.completed);
+                                        const completedTasks = ticket.plan.tasks.filter(t => t.completed).length;
+                                        const totalTasks = ticket.plan.tasks.length;
 
-                                                <div className="flex items-center space-x-6 text-sm text-gray-600 ml-10">
-                                                    <span className="text-purple-600 font-medium bg-purple-100 px-3 py-1 rounded-full">
-                                                        {task.projectName}
-                                                    </span>
-                                                    <span className="flex items-center">
-                                                        <Calendar className="w-4 h-4 mr-1" />
-                                                        Due: {task.deadline}
-                                                    </span>
-                                                    {timeSpent[`${task.ticketId}-${task.id}`] && (
-                                                        <span className="text-blue-600 flex items-center bg-blue-100 px-3 py-1 rounded-full">
-                                                            <Clock className="w-4 h-4 mr-1" />
-                                                            {formatTime(timeSpent[`${task.ticketId}-${task.id}`])}
-                                                        </span>
-                                                    )}
-                                                    {activeTimer?.taskId === task.id && activeTimer?.ticketId === task.ticketId && (
-                                                        <span className="text-green-600 animate-pulse flex items-center bg-green-100 px-3 py-1 rounded-full">
-                                                            🔴 Recording
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center space-x-2">
-                                                {!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== task.ticketId) ? (
-                                                    <button
-                                                        onClick={() => startTimer(task.id, task.ticketId)}
-                                                        className="bg-gradient-to-r from-green-400 to-emerald-500 text-white p-3 rounded-xl hover:shadow-lg transform hover:scale-110 transition-all duration-300"
-                                                        title="Start timer"
-                                                    >
-                                                        <Clock className="w-5 h-5" />
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={stopTimer}
-                                                        className="bg-gradient-to-r from-red-400 to-pink-500 text-white p-3 rounded-xl hover:shadow-lg transform hover:scale-110 transition-all duration-300"
-                                                        title="Stop timer"
-                                                    >
-                                                        <X className="w-5 h-5" />
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                )) : (
-                                    <div className="text-center py-12">
-                                        <div className="bg-gradient-to-r from-green-400 to-emerald-500 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl">
-                                            <CheckCircle className="w-12 h-12 text-white" />
-                                        </div>
-                                        <h3 className="text-2xl font-bold text-gray-700 mb-3">All caught up!</h3>
-                                        <p className="text-gray-500 text-lg">No urgent tasks for today. Great work! 🎉</p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* All Tickets */}
-                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
-                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
-                                All Research Projects
-                            </h3>
-                            <div className="space-y-6">
-                                {tickets.map(ticket => (
-                                    <div key={ticket.id} className="bg-gradient-to-br from-white/80 to-blue-50/80 backdrop-blur-sm border border-white/50 rounded-2xl p-8 hover:shadow-2xl transform hover:scale-[1.01] transition-all duration-300">
-                                        <div className="flex items-start justify-between mb-6">
-                                            <div className="flex-1">
-                                                <div className="flex items-center space-x-4 mb-3">
-                                                    <h3 className="text-2xl font-bold text-gray-800">{ticket.title}</h3>
-                                                    <div className={`px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${
-                                                        ticket.status === 'completed' ? 'from-green-400 to-emerald-500 text-white' :
-                                                            ticket.status === 'in-progress' ? 'from-blue-400 to-indigo-500 text-white' :
-                                                                'from-gray-400 to-gray-500 text-white'
-                                                    } shadow-lg`}>
-                                                        {ticket.status}
-                                                    </div>
-                                                    <div className={`px-3 py-1 rounded-full text-xs font-medium border-2 bg-gradient-to-r ${getPriorityColor(ticket.priority)} text-white shadow-lg`}>
-                                                        {ticket.priority}
-                                                    </div>
-                                                </div>
-                                                <p className="text-gray-600 mb-4 text-lg">{ticket.description}</p>
-                                                <div className="flex items-center space-x-6 text-sm text-gray-500">
-                                                    <span className="flex items-center">
-                                                        <Calendar className="w-4 h-4 mr-1" />
-                                                        Created: {ticket.created}
-                                                    </span>
-                                                    <span className="flex items-center">
-                                                        <Target className="w-4 h-4 mr-1" />
-                                                        Due: {ticket.deadline}
-                                                    </span>
-                                                    <span className="flex items-center">
-                                                        <Clock className="w-4 h-4 mr-1" />
-                                                        {ticket.estimatedHours}h estimated
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center space-x-4">
-                                                <div className="text-right">
-                                                    <div className="text-4xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                                                        {ticket.progress}%
-                                                    </div>
-                                                    <div className="text-sm text-gray-500">Complete</div>
-                                                </div>
-                                                <button
-                                                    onClick={() => setEditingTicket(ticket)}
-                                                    className="p-3 text-gray-400 hover:text-purple-600 transform hover:scale-110 transition-all duration-300"
-                                                >
-                                                    <Edit className="w-5 h-5" />
-                                                </button>
-                                                <button
-                                                    onClick={() => deleteTicket(ticket.id)}
-                                                    className="p-3 text-gray-400 hover:text-red-600 transform hover:scale-110 transition-all duration-300"
-                                                >
-                                                    <Trash2 className="w-5 h-5" />
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        <div className="mb-6">
-                                            <LiquidProgressBar
-                                                progress={ticket.progress}
-                                                className="h-4"
-                                                colors="from-purple-500 via-pink-500 to-purple-600"
-                                            />
-                                        </div>
-
-                                        <div className="grid md:grid-cols-2 gap-8">
-                                            <div>
-                                                <div className="flex items-center justify-between mb-4">
-                                                    <h4 className="font-bold text-gray-800 text-lg">Project Phases</h4>
-                                                    <button
-                                                        onClick={() => setShowAddPhase(ticket.id)}
-                                                        className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1 transform hover:scale-105 transition-all"
-                                                        title="Add new phase"
-                                                    >
-                                                        <Plus className="w-3 h-3" />
-                                                        <span>Add Phase</span>
-                                                    </button>
-                                                </div>
-                                                <div className="space-y-3">
-                                                    {ticket.plan.phases.map((phase, index) => {
-                                                        const isCurrentPhase = !phase.completed && !ticket.plan.phases.slice(0, index).some(p => !p.completed);
-                                                        const phaseTasks = ticket.plan.tasks.filter(task => task.phase === phase.id);
-                                                        const completedPhaseTasks = phaseTasks.filter(task => task.completed).length;
-                                                        const isSelectedPhase = selectedPhase === `${ticket.id}-${phase.id}`;
-
-                                                        return (
-                                                            <div key={phase.id} className="flex items-center space-x-3 text-sm group">
-                                                                <button
-                                                                    onClick={() => togglePhaseComplete(ticket.id, phase.id)}
-                                                                    className={`w-4 h-4 rounded-full transition-all duration-300 shadow-lg ${
-                                                                        phase.completed
-                                                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500'
-                                                                            : isCurrentPhase
-                                                                                ? `bg-gradient-to-r ${getPhaseColor(phase.name, index)} animate-pulse`
-                                                                                : 'bg-gray-300 hover:bg-gray-400'
-                                                                    }`}
-                                                                ></button>
-                                                                {editingPhase === `${ticket.id}-${phase.id}` ? (
-                                                                    <div className="flex-1 space-y-2">
-                                                                        <input
-                                                                            type="text"
-                                                                            value={phase.name}
-                                                                            onChange={(e) => {
-                                                                                const updatedTickets = tickets.map(t =>
-                                                                                    t.id === ticket.id
-                                                                                        ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, name: e.target.value } : p) } }
-                                                                                        : t
-                                                                                );
-                                                                                setTickets(updatedTickets);
-                                                                            }}
-                                                                            className="text-sm border-b border-purple-300 focus:outline-none bg-transparent"
-                                                                        />
-                                                                        <div className="flex space-x-2">
-                                                                            <input
-                                                                                type="date"
-                                                                                value={phase.start_date}
-                                                                                onChange={(e) => {
-                                                                                    const updatedTickets = tickets.map(t =>
-                                                                                        t.id === ticket.id
-                                                                                            ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, start_date: e.target.value } : p) } }
-                                                                                            : t
-                                                                                    );
-                                                                                    setTickets(updatedTickets);
-                                                                                }}
-                                                                                className="text-xs border-b border-purple-300 focus:outline-none bg-transparent"
-                                                                            />
-                                                                            <input
-                                                                                type="date"
-                                                                                value={phase.end_date}
-                                                                                onChange={(e) => {
-                                                                                    const updatedTickets = tickets.map(t =>
-                                                                                        t.id === ticket.id
-                                                                                            ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, end_date: e.target.value } : p) } }
-                                                                                            : t
-                                                                                    );
-                                                                                    setTickets(updatedTickets);
-                                                                                }}
-                                                                                className="text-xs border-b border-purple-300 focus:outline-none bg-transparent"
-                                                                            />
-                                                                        </div>
-                                                                    </div>
-                                                                ) : (
-                                                                    <>
-                                                                        <span
-                                                                            className={`cursor-pointer hover:text-purple-600 hover:underline transition-colors font-medium ${
-                                                                                phase.completed
-                                                                                    ? 'line-through text-gray-500'
-                                                                                    : isCurrentPhase
-                                                                                        ? 'text-purple-600 font-bold'
-                                                                                        : isSelectedPhase
-                                                                                            ? 'text-purple-600 font-bold bg-purple-50 px-2 py-1 rounded'
-                                                                                            : 'text-gray-700'
-                                                                            }`}
-                                                                            onClick={() => {
-                                                                                const phaseKey = `${ticket.id}-${phase.id}`;
-                                                                                setSelectedPhase(selectedPhase === phaseKey ? null : phaseKey);
-                                                                            }}
-                                                                            onDoubleClick={() => setEditingPhase(`${ticket.id}-${phase.id}`)}
-                                                                            title={`Click to view tasks • Double-click to edit phase details • ${completedPhaseTasks}/${phaseTasks.length} tasks completed`}
-                                                                        >
-                                                                            {phase.name}
-                                                                            {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Current</span>}
-                                                                            {isSelectedPhase && <span className="ml-2 text-xs">← Viewing</span>}
-                                                                            <span className="ml-2 text-xs text-gray-400">({completedPhaseTasks}/{phaseTasks.length})</span>
-                                                                        </span>
-                                                                        <NoteIcon
-                                                                            hasNote={hasNote('phase', phase.id)}
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                handleNoteClick('phase', phase.id, ticket.id);
-                                                                            }}
-                                                                            className="ml-2"
-                                                                        />
-                                                                    </>
-                                                                )}
-                                                                <button
-                                                                    onClick={() => removePhase(ticket.id, phase.id)}
-                                                                    className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all transform hover:scale-110"
-                                                                    title="Remove phase"
-                                                                >
-                                                                    <X className="w-3 h-3" />
-                                                                </button>
-                                                                <span className="text-gray-400 text-xs">({phase.start_date} - {phase.end_date})</span>
+                                        return (
+                                            <div key={ticket.id} className={`bg-white/90 backdrop-blur-sm rounded-2xl p-6 border-2 border-white/50 shadow-xl hover:shadow-2xl transform hover:scale-[1.02] transition-all duration-300`}>
+                                                <div className="flex items-start justify-between mb-3">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center space-x-2 mb-1">
+                                                            <h3 className="font-bold text-lg text-gray-800">{ticket.title}</h3>
+                                                            <div className={`px-2 py-0.5 rounded-full text-xs font-medium bg-gradient-to-r ${colorClass} text-white shadow-md`}>
+                                                                {ticket.priority}
                                                             </div>
-                                                        );
-                                                    })}
-
-                                                    {/* Add Phase Form */}
-                                                    {showAddPhase === ticket.id && (
-                                                        <div className="flex items-center space-x-2 mt-2">
-                                                            <input
-                                                                type="text"
-                                                                value={newPhaseName}
-                                                                onChange={(e) => setNewPhaseName(e.target.value)}
-                                                                placeholder="Phase name..."
-                                                                className="text-sm border border-purple-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-400"
-                                                                onKeyPress={(e) => e.key === 'Enter' && addPhaseToTicket(ticket.id)}
-                                                                autoFocus
-                                                            />
-                                                            <button
-                                                                onClick={() => addPhaseToTicket(ticket.id)}
-                                                                className="text-green-600 hover:text-green-700 transform hover:scale-110 transition-all"
-                                                                title="Add phase"
-                                                            >
-                                                                <CheckCircle className="w-4 h-4" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => {
-                                                                    setShowAddPhase(null);
-                                                                    setNewPhaseName('');
-                                                                }}
-                                                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
-                                                                title="Cancel"
-                                                            >
-                                                                <X className="w-4 h-4" />
-                                                            </button>
                                                         </div>
-                                                    )}
-                                                </div>
-                                            </div>
-
-                                            <div>
-                                                <div className="flex items-center justify-between mb-4">
-                                                    <h4 className="font-bold text-gray-800 text-lg">
-                                                        {selectedPhase ?
-                                                            (() => {
-                                                                const [, phaseIdStr] = selectedPhase.split('-');
-                                                                const phase = ticket.plan.phases.find(p => p.id === parseInt(phaseIdStr));
-                                                                return `${phase?.name || 'Phase'} Tasks`;
-                                                            })() :
-                                                            'Current Tasks'
-                                                        }
-                                                    </h4>
-                                                    <div className="flex items-center space-x-2">
-                                                        {selectedPhase && (
-                                                            <button
-                                                                onClick={() => setSelectedPhase(null)}
-                                                                className="text-xs text-gray-500 hover:text-gray-700 transform hover:scale-105 transition-all"
-                                                            >
-                                                                Show Current
-                                                            </button>
-                                                        )}
+                                                        <p className="text-sm text-gray-600 line-clamp-1">{ticket.description}</p>
+                                                    </div>
+                                                    <div className="flex items-center space-x-1">
                                                         <button
-                                                            onClick={() => {
-                                                                const phaseId = selectedPhase ? parseInt(selectedPhase.split('-')[1]) :
-                                                                    ticket.plan.phases.find(p => !p.completed)?.id || ticket.plan.phases[0]?.id;
-                                                                setShowAddTask(`${ticket.id}-${phaseId}`);
-                                                            }}
-                                                            className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1 transform hover:scale-105 transition-all"
-                                                            title="Add new task"
+                                                            onClick={() => setEditingTicket(ticket)}
+                                                            className="p-2 text-gray-400 hover:text-purple-600 transform hover:scale-110 transition-all"
                                                         >
-                                                            <Plus className="w-3 h-3" />
-                                                            <span>Add Task</span>
+                                                            <Edit className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => deleteTicket(ticket.id)}
+                                                            className="p-2 text-gray-400 hover:text-red-600 transform hover:scale-110 transition-all"
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <div className="space-y-3">
-                                                    {(() => {
-                                                        let tasksToShow;
 
-                                                        if (selectedPhase) {
-                                                            // Show tasks from selected phase
-                                                            tasksToShow = getTasksByPhase(ticket, parseInt(selectedPhase.split('-')[1]));
-                                                        } else {
-                                                            // Show current relevant tasks (the original working logic)
-                                                            tasksToShow = getRelevantTasks(ticket);
-                                                        }
-
-                                                        return tasksToShow.length > 0 ? tasksToShow.map(task => (
-                                                            <div key={task.id} className="flex items-center space-x-3 group">
-                                                                <button
-                                                                    onClick={() => toggleTaskComplete(ticket.id, task.id)}
-                                                                    className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-300 transform hover:scale-110 ${
-                                                                        task.completed
-                                                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400 shadow-lg'
-                                                                            : 'border-gray-300 hover:border-purple-400 hover:shadow-md'
-                                                                    }`}
-                                                                >
-                                                                    {task.completed && <CheckCircle className="w-3 h-3 text-white" />}
-                                                                </button>
-                                                                {editingTask === `${ticket.id}-${task.id}` ? (
-                                                                    <input
-                                                                        type="text"
-                                                                        value={task.title}
-                                                                        onChange={(e) => {
-                                                                            const updatedTickets = tickets.map(t =>
-                                                                                t.id === ticket.id
-                                                                                    ? { ...t, plan: { ...t.plan, tasks: t.plan.tasks.map(tsk => tsk.id === task.id ? { ...tsk, title: e.target.value } : tsk) } }
-                                                                                    : t
-                                                                            );
-                                                                            setTickets(updatedTickets);
-                                                                        }}
-                                                                        onBlur={() => setEditingTask(null)}
-                                                                        onKeyPress={(e) => e.key === 'Enter' && setEditingTask(null)}
-                                                                        className="text-sm border-b border-purple-300 focus:outline-none bg-transparent flex-1"
-                                                                        autoFocus
-                                                                    />
-                                                                ) : (
-                                                                    <>
-                                                                        <span
-                                                                            className={`text-sm cursor-pointer hover:text-purple-600 transition-colors flex-1 ${task.completed ? 'line-through text-gray-500' : 'text-gray-700'}`}
-                                                                            onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}`)}
-                                                                            title={`Due: ${task.deadline} • Double-click to edit`}
-                                                                        >
-                                                                            {task.title}
-                                                                        </span>
-                                                                        <NoteIcon
-                                                                            hasNote={hasNote('task', task.id)}
-                                                                            onClick={(e) => {
-                                                                                e.stopPropagation();
-                                                                                handleNoteClick('task', task.id, ticket.id);
-                                                                            }}
-                                                                            className="ml-2"
-                                                                        />
-                                                                    </>
-                                                                )}
-                                                                <div className="flex items-center space-x-1">
-                                                                    {!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== ticket.id) ? (
-                                                                        <button
-                                                                            onClick={() => startTimer(task.id, ticket.id)}
-                                                                            className="text-gray-400 hover:text-green-600 transition-colors transform hover:scale-110"
-                                                                            title="Start timer"
-                                                                        >
-                                                                            <Clock className="w-4 h-4" />
-                                                                        </button>
-                                                                    ) : (
-                                                                        <button
-                                                                            onClick={stopTimer}
-                                                                            className="text-green-600 hover:text-red-600 transition-colors transform hover:scale-110"
-                                                                            title="Stop timer"
-                                                                        >
-                                                                            <X className="w-4 h-4" />
-                                                                        </button>
-                                                                    )}
-                                                                    <button
-                                                                        onClick={() => removeTask(ticket.id, task.id)}
-                                                                        className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all transform hover:scale-110"
-                                                                        title="Remove task"
-                                                                    >
-                                                                        <Trash2 className="w-3 h-3" />
-                                                                    </button>
-                                                                    {timeSpent[`${ticket.id}-${task.id}`] && (
-                                                                        <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded-full">
-                                                                            {formatTime(timeSpent[`${ticket.id}-${task.id}`])}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        )) : (
-                                                            <div className="text-sm text-gray-500 italic bg-gray-50 p-4 rounded-xl">
-                                                                {selectedPhase
-                                                                    ? 'No tasks in this phase yet. Add some tasks to get started!'
-                                                                    : getRelevantTasks(ticket).length === 0
-                                                                        ? '🎉 All current tasks completed! Great work!'
-                                                                        : 'No tasks available'
-                                                                }
-                                                            </div>
-                                                        );
-                                                    })()}
-
-                                                    {/* Add Task Form */}
-                                                    {showAddTask && showAddTask.startsWith(`${ticket.id}-`) && (
-                                                        <div className="flex items-center space-x-2 mt-2">
-                                                            <input
-                                                                type="text"
-                                                                value={newTaskTitle}
-                                                                onChange={(e) => setNewTaskTitle(e.target.value)}
-                                                                placeholder="Task description..."
-                                                                className="text-sm border border-purple-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-400 flex-1"
-                                                                onKeyPress={(e) => {
-                                                                    if (e.key === 'Enter') {
-                                                                        const phaseId = parseInt(showAddTask.split('-')[1]);
-                                                                        addTaskToPhase(ticket.id, phaseId);
-                                                                    }
-                                                                }}
-                                                                autoFocus
+                                                <div className="flex items-center space-x-4">
+                                                    {/* Mini Donut Chart */}
+                                                    <div className="relative w-20 h-20">
+                                                        <svg className="w-20 h-20 transform -rotate-90" viewBox="0 0 36 36">
+                                                            <path
+                                                                d="m18,2.0845
+                                                a 15.9155,15.9155 0 0,1 0,31.831
+                                                a 15.9155,15.9155 0 0,1 0,-31.831"
+                                                                fill="none"
+                                                                stroke="rgba(229, 231, 235, 1)"
+                                                                strokeWidth="3"
                                                             />
-                                                            <button
-                                                                onClick={() => {
-                                                                    const phaseId = parseInt(showAddTask.split('-')[1]);
-                                                                    addTaskToPhase(ticket.id, phaseId);
-                                                                }}
-                                                                className="text-green-600 hover:text-green-700 transform hover:scale-110 transition-all"
-                                                                title="Add task"
-                                                            >
-                                                                <CheckCircle className="w-4 h-4" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => {
-                                                                    setShowAddTask(null);
-                                                                    setNewTaskTitle('');
-                                                                }}
-                                                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
-                                                                title="Cancel"
-                                                            >
-                                                                <X className="w-4 h-4" />
-                                                            </button>
+                                                            <path
+                                                                d="m18,2.0845
+                                                a 15.9155,15.9155 0 0,1 0,31.831
+                                                a 15.9155,15.9155 0 0,1 0,-31.831"
+                                                                fill="none"
+                                                                stroke={`url(#gradient-${ticket.id})`}
+                                                                strokeWidth="3"
+                                                                strokeDasharray={`${ticket.progress}, 100`}
+                                                                strokeLinecap="round"
+                                                            />
+                                                            <defs>
+                                                                <linearGradient id={`gradient-${ticket.id}`} x1="0%" y1="0%" x2="100%" y2="0%">
+                                                                    <stop offset="0%" className={`${colorClass.split(' ')[0].replace('from-', 'text-')}`} stopColor="currentColor" />
+                                                                    <stop offset="100%" className={`${colorClass.split(' ')[1].replace('to-', 'text-')}`} stopColor="currentColor" />
+                                                                </linearGradient>
+                                                            </defs>
+                                                        </svg>
+                                                        <div className="absolute inset-0 flex items-center justify-center">
+                                                            <span className="text-sm font-bold text-gray-800">{ticket.progress}%</span>
                                                         </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
+                                                    </div>
 
-                                {tickets.length === 0 && (
-                                    <div className="text-center py-16">
-                                        <div className="bg-gradient-to-r from-purple-500 to-pink-500 w-32 h-32 rounded-full flex items-center justify-center mx-auto mb-8 shadow-2xl">
-                                            <Brain className="w-16 h-16 text-white animate-pulse" />
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <span className="text-xs text-gray-500">Current Phase</span>
+                                                            <span className="text-xs text-gray-600">{completedTasks}/{totalTasks} tasks</span>
+                                                        </div>
+                                                        <div className="text-sm font-medium text-gray-700">
+                                                            {currentPhase ? currentPhase.name : 'All phases completed'}
+                                                        </div>
+                                                        <div className="flex items-center space-x-2 mt-2 text-xs text-gray-500">
+                                                            <Calendar className="w-3 h-3" />
+                                                            <span>Due: {ticket.deadline}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                {/* Phases and Tasks Section */}
+                                                <div className="mt-4 pt-4 border-t border-gray-200">
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        {/* Phases Column */}
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-3">
+                                                                <h4 className="font-bold text-gray-800 text-sm">Phases</h4>
+                                                                <button
+                                                                    onClick={() => setShowAddPhase(ticket.id)}
+                                                                    className="text-xs text-purple-600 hover:text-purple-700 flex items-center space-x-1"
+                                                                >
+                                                                    <Plus className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
+                                                            <div className="space-y-2">
+                                                                {ticket.plan.phases.map((phase, phaseIndex) => {
+                                                                    const isCurrentPhase = !phase.completed && !ticket.plan.phases.slice(0, phaseIndex).some(p => !p.completed);
+                                                                    const phaseTasks = ticket.plan.tasks.filter(task => task.phase === phase.id);
+                                                                    const completedPhaseTasks = phaseTasks.filter(task => task.completed).length;
+                                                                    const isSelectedPhase = selectedPhase === `${ticket.id}-${phase.id}`;
+
+                                                                    return (
+                                                                        <div key={phase.id} className="flex items-center space-x-2 text-xs group">
+                                                                            <button
+                                                                                onClick={() => togglePhaseComplete(ticket.id, phase.id)}
+                                                                                className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                                                                                    phase.completed
+                                                                                        ? 'bg-gradient-to-r from-green-400 to-emerald-500'
+                                                                                        : isCurrentPhase
+                                                                                            ? `bg-gradient-to-r ${getPhaseColor(phase.name, phaseIndex)} animate-pulse`
+                                                                                            : 'bg-gray-300'
+                                                                                }`}
+                                                                            />
+                                                                            {editingPhase === `${ticket.id}-${phase.id}` ? (
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={phase.name}
+                                                                                    onChange={(e) => {
+                                                                                        const newName = e.target.value;
+                                                                                        setTickets(prev => prev.map(t =>
+                                                                                            t.id === ticket.id
+                                                                                                ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, name: newName } : p) } }
+                                                                                                : t
+                                                                                        ));
+                                                                                    }}
+                                                                                    onBlur={() => {
+                                                                                        updatePhaseName(ticket.id, phase.id, phase.name);
+                                                                                        setEditingPhase(null);
+                                                                                    }}
+                                                                                    onKeyPress={(e) => e.key === 'Enter' && setEditingPhase(null)}
+                                                                                    className="text-xs border-b border-purple-300 focus:outline-none bg-transparent flex-1"
+                                                                                    autoFocus
+                                                                                />
+                                                                            ) : (
+                                                                                <span
+                                                                                    className={`cursor-pointer hover:text-purple-600 transition-colors flex-1 ${
+                                                                                        phase.completed ? 'line-through text-gray-500' :
+                                                                                            isCurrentPhase ? 'text-purple-600 font-semibold' :
+                                                                                                isSelectedPhase ? 'text-purple-600 font-semibold' : 'text-gray-700'
+                                                                                    }`}
+                                                                                    onClick={() => {
+                                                                                        const phaseKey = `${ticket.id}-${phase.id}`;
+                                                                                        setSelectedPhase(selectedPhase === phaseKey ? null : phaseKey);
+                                                                                    }}
+                                                                                    onDoubleClick={() => setEditingPhase(`${ticket.id}-${phase.id}`)}
+                                                                                    title="Click to view tasks • Double-click to edit"
+                                                                                >
+                                                                                    {phase.name}
+                                                                                    {isCurrentPhase && <span className="ml-1 text-xs">•</span>}
+                                                                                    <span className="ml-1 text-gray-400">({completedPhaseTasks}/{phaseTasks.length})</span>
+                                                                                </span>
+                                                                            )}
+                                                                            <NoteIcon
+                                                                                hasNote={hasNote('phase', phase.id)}
+                                                                                onClick={(e) => {
+                                                                                    e.stopPropagation();
+                                                                                    handleNoteClick('phase', phase.id, ticket.id);
+                                                                                }}
+                                                                                className="opacity-0 group-hover:opacity-100"
+                                                                            />
+                                                                            <button
+                                                                                onClick={() => removePhase(ticket.id, phase.id)}
+                                                                                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all"
+                                                                                title="Remove phase"
+                                                                            >
+                                                                                <X className="w-3 h-3" />
+                                                                            </button>
+                                                                        </div>
+                                                                    );
+                                                                })}
+
+                                                                {/* Add Phase Form */}
+                                                                {showAddPhase === ticket.id && (
+                                                                    <div className="flex items-center space-x-1 mt-2">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={newPhaseName}
+                                                                            onChange={(e) => setNewPhaseName(e.target.value)}
+                                                                            placeholder="Phase name..."
+                                                                            className="text-xs border border-purple-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-400 flex-1"
+                                                                            onKeyPress={(e) => e.key === 'Enter' && addPhaseToTicket(ticket.id)}
+                                                                            autoFocus
+                                                                        />
+                                                                        <button
+                                                                            onClick={() => addPhaseToTicket(ticket.id)}
+                                                                            className="text-green-600 hover:text-green-700"
+                                                                        >
+                                                                            <CheckCircle className="w-3 h-3" />
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                setShowAddPhase(null);
+                                                                                setNewPhaseName('');
+                                                                            }}
+                                                                            className="text-gray-400 hover:text-gray-600"
+                                                                        >
+                                                                            <X className="w-3 h-3" />
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Tasks Column */}
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-3">
+                                                                <h4 className="font-bold text-gray-800 text-sm">
+                                                                    {selectedPhase && selectedPhase.startsWith(`${ticket.id}-`) ?
+                                                                        ticket.plan.phases.find(p => p.id === parseInt(selectedPhase.split('-')[1]))?.name + ' Tasks' :
+                                                                        'Current Tasks'
+                                                                    }
+                                                                </h4>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        const phaseId = selectedPhase ? parseInt(selectedPhase.split('-')[1]) :
+                                                                            ticket.plan.phases.find(p => !p.completed)?.id || ticket.plan.phases[0]?.id;
+                                                                        setShowAddTask(`${ticket.id}-${phaseId}`);
+                                                                    }}
+                                                                    className="text-xs text-purple-600 hover:text-purple-700 flex items-center space-x-1"
+                                                                >
+                                                                    <Plus className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
+                                                            <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
+                                                                {(() => {
+                                                                    let tasksToShow = (selectedPhase && selectedPhase.startsWith(`${ticket.id}-`)) ?
+                                                                        getTasksByPhase(ticket, parseInt(selectedPhase.split('-')[1])) :
+                                                                        getRelevantTasks(ticket);
+
+                                                                    return tasksToShow.length > 0 ? tasksToShow.slice(0, 5).map(task => (
+                                                                        <div key={task.id} className="flex items-center space-x-2 group">
+                                                                            <button
+                                                                                onClick={() => toggleTaskComplete(ticket.id, task.id)}
+                                                                                className={`w-3 h-3 rounded border flex items-center justify-center transition-all ${
+                                                                                    task.completed
+                                                                                        ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400'
+                                                                                        : 'border-gray-300 hover:border-purple-400'
+                                                                                }`}
+                                                                            >
+                                                                                {task.completed && <CheckCircle className="w-2 h-2 text-white" />}
+                                                                            </button>
+                                                                            {editingTask === `${ticket.id}-${task.id}` ? (
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={task.title}
+                                                                                    onChange={(e) => {
+                                                                                        setTickets(prev => prev.map(t =>
+                                                                                            t.id === ticket.id
+                                                                                                ? { ...t, plan: { ...t.plan, tasks: t.plan.tasks.map(tsk => tsk.id === task.id ? { ...tsk, title: e.target.value } : tsk) } }
+                                                                                                : t
+                                                                                        ));
+                                                                                    }}
+                                                                                    onBlur={() => setEditingTask(null)}
+                                                                                    onKeyPress={(e) => e.key === 'Enter' && setEditingTask(null)}
+                                                                                    className="text-xs border-b border-purple-300 focus:outline-none bg-transparent flex-1"
+                                                                                    autoFocus
+                                                                                />
+                                                                            ) : (
+                                                                                <span
+                                                                                    className={`text-xs cursor-pointer hover:text-purple-600 flex-1 truncate ${
+                                                                                        task.completed ? 'line-through text-gray-500' : 'text-gray-700'
+                                                                                    }`}
+                                                                                    onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}`)}
+                                                                                    title={`${task.title} - Due: ${task.deadline} • Double-click to edit`}
+                                                                                >
+    {task.title}
+</span>
+                                                                            )}
+                                                                            {editingTask === `${ticket.id}-${task.id}-deadline` ? (
+                                                                                <input
+                                                                                    type="date"
+                                                                                    value={task.deadline}
+                                                                                    onChange={(e) => {
+                                                                                        const newDeadline = e.target.value;
+                                                                                        updateTaskDeadline(ticket.id, task.id, newDeadline);
+                                                                                    }}
+                                                                                    onBlur={() => setEditingTask(null)}
+                                                                                    className="text-xs border-b border-purple-300 focus:outline-none bg-transparent"
+                                                                                />
+                                                                            ) : (
+                                                                                <span
+                                                                                    className="text-xs text-gray-400 cursor-pointer hover:text-purple-600"
+                                                                                    onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}-deadline`)}
+                                                                                    title="Double-click to edit deadline"
+                                                                                >
+                                                                                    {task.deadline}
+                                                                                </span>
+                                                                            )}
+                                                                            <div className="opacity-0 group-hover:opacity-100 flex items-center space-x-1">
+                                                                                <button
+                                                                                    onClick={() => removeTask(ticket.id, task.id)}
+                                                                                    className="text-red-400 hover:text-red-600"
+                                                                                >
+                                                                                    <X className="w-3 h-3" />
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+                                                                    )) : (
+                                                                        <div className="text-xs text-gray-500 italic">
+                                                                            {selectedPhase ? 'No tasks in this phase' : 'No active tasks'}
+                                                                        </div>
+                                                                    );
+                                                                })()}
+
+                                                                {/* Add Task Form */}
+                                                                {showAddTask && showAddTask.startsWith(`${ticket.id}-`) && (
+                                                                    <div className="flex items-center space-x-1 mt-2">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={newTaskTitle}
+                                                                            onChange={(e) => setNewTaskTitle(e.target.value)}
+                                                                            placeholder="Task..."
+                                                                            className="text-xs border border-purple-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-purple-400 flex-1"
+                                                                            onKeyPress={(e) => {
+                                                                                if (e.key === 'Enter') {
+                                                                                    const phaseId = parseInt(showAddTask.split('-')[1]);
+                                                                                    addTaskToPhase(ticket.id, phaseId);
+                                                                                }
+                                                                            }}
+                                                                            autoFocus
+                                                                        />
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                const phaseId = parseInt(showAddTask.split('-')[1]);
+                                                                                addTaskToPhase(ticket.id, phaseId);
+                                                                            }}
+                                                                            className="text-green-600 hover:text-green-700"
+                                                                        >
+                                                                            <CheckCircle className="w-3 h-3" />
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                setShowAddTask(null);
+                                                                                setNewTaskTitle('');
+                                                                            }}
+                                                                            className="text-gray-400 hover:text-gray-600"
+                                                                        >
+                                                                            <X className="w-3 h-3" />
+                                                                        </button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/*/!* Quick Actions Bar *!/*/}
+                                                {/*<div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">*/}
+                                                {/*    <button*/}
+                                                {/*        onClick={() => {*/}
+                                                {/*            const phaseKey = currentPhase ? `${ticket.id}-${currentPhase.id}` : null;*/}
+                                                {/*            setSelectedPhase(phaseKey);*/}
+                                                {/*        }}*/}
+                                                {/*        className="text-xs text-purple-600 hover:text-purple-700 font-medium flex items-center space-x-1"*/}
+                                                {/*    >*/}
+                                                {/*        <Target className="w-3 h-3" />*/}
+                                                {/*        <span>View Tasks</span>*/}
+                                                {/*    </button>*/}
+                                                {/*    <div className="flex items-center space-x-3 text-xs text-gray-500">*/}
+                                                {/*        <span className={`flex items-center space-x-1 ${ticket.status === 'completed' ? 'text-green-600' : ticket.status === 'in-progress' ? 'text-blue-600' : 'text-gray-600'}`}>*/}
+                                                {/*            <div className={`w-2 h-2 rounded-full ${ticket.status === 'completed' ? 'bg-green-500' : ticket.status === 'in-progress' ? 'bg-blue-500' : 'bg-gray-400'}`}></div>*/}
+                                                {/*            <span>{ticket.status}</span>*/}
+                                                {/*        </span>*/}
+                                                {/*    </div>*/}
+                                                {/*</div>*/}
+                                            </div>
+                                        );
+                                    })}
+
+                                    {tickets.length === 0 && (
+                                        <div className="text-center py-12">
+                                            <div className="bg-gradient-to-r from-purple-500 to-pink-500 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl">
+                                                <Brain className="w-12 h-12 text-white animate-pulse" />
+                                            </div>
+                                            <h3 className="text-xl font-bold text-gray-700 mb-2">No projects yet</h3>
+                                            <p className="text-gray-500 text-sm">Create your first research project to get started!</p>
                                         </div>
-                                        <h3 className="text-3xl font-bold text-gray-700 mb-4">No projects yet</h3>
-                                        <p className="text-gray-500 text-lg mb-8">Create your first research project to get started!</p>
-                                        <button
-                                            onClick={() => setShowCreateTask(true)}
-                                            className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-8 py-4 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300"
-                                        >
-                                            Create Your First Project
-                                        </button>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
                             </div>
+                        </div>
+
+                        {/* Right Column - Today's Focus */}
+                        <div className="col-span-3 space-y-6 overflow-y-auto custom-scrollbar">
+                            {/* Today's Focus Header */}
+                            <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-6 shadow-xl border border-white/30">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h2 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                        Today's Focus
+                                    </h2>
+                                    <div className="text-sm text-gray-600 bg-white/50 px-4 py-2 rounded-xl">
+                                        {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                                    </div>
+                                </div>
+
+                                {/* Today's Progress Summary */}
+                                <div className="grid grid-cols-3 gap-4 mb-6">
+                                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-xl border border-green-200">
+                                        <div className="flex items-center space-x-2 mb-1">
+                                            <CheckCircle className="w-4 h-4 text-green-600" />
+                                            <span className="text-xs font-medium text-green-800">Completed Today</span>
+                                        </div>
+                                        <div className="text-2xl font-bold text-green-700">
+                                            {tickets.flatMap(t => t.plan.tasks).filter(task => task.completed).length}
+                                        </div>
+                                    </div>
+                                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 rounded-xl border border-blue-200">
+                                        <div className="flex items-center space-x-2 mb-1">
+                                            <Clock className="w-4 h-4 text-blue-600" />
+                                            <span className="text-xs font-medium text-blue-800">Time Tracked</span>
+                                        </div>
+                                        <div className="text-2xl font-bold text-blue-700">
+                                            {formatTime(getTotalTimeSpent())}
+                                        </div>
+                                    </div>
+                                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-xl border border-purple-200">
+                                        <div className="flex items-center space-x-2 mb-1">
+                                            <Flame className="w-4 h-4 text-purple-600" />
+                                            <span className="text-xs font-medium text-purple-800">Daily Streak</span>
+                                        </div>
+                                        <div className="text-2xl font-bold text-purple-700">
+                                            3 days
+                                        </div>
+                                    </div>
+                                </div>
+                                {/* Today's Tasks */}
+                                <div className="space-y-4">
+                                    <h3 className="text-sm font-bold text-orange-600 mb-3 flex items-center">
+                                        <Calendar className="w-4 h-4 mr-2" />
+                                        Due Today
+                                    </h3>
+
+                                    {(() => {
+                                        const todayTasks = tickets.flatMap(ticket =>
+                                            ticket.plan.tasks
+                                                .filter(task => !task.completed && task.deadline === new Date().toISOString().split('T')[0])
+                                                .map(task => ({ ...task, ticketId: ticket.id, projectName: ticket.title, ticketPriority: ticket.priority }))
+                                        );
+
+                                        return todayTasks.length > 0 ? (
+                                            <div className="space-y-2">
+                                                {todayTasks.map(task => (
+                                                    <TaskItem key={`${task.ticketId}-${task.id}`} task={task} />
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="text-center py-8">
+                                                <div className="bg-gradient-to-r from-green-400 to-emerald-500 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3 shadow-xl">
+                                                    <CheckCircle className="w-8 h-8 text-white" />
+                                                </div>
+                                                <h3 className="text-lg font-bold text-gray-700 mb-1">No tasks due today!</h3>
+                                                <p className="text-gray-500 text-sm">Check your calendar for upcoming tasks</p>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+
+                            </div>
+
+                            {/* Time Tracking Summary */}
+                            {activeTimer && (
+                                <div className="bg-gradient-to-r from-green-100 to-emerald-100 rounded-3xl p-6 shadow-xl border border-green-200">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h3 className="font-bold text-green-800 text-lg">Currently Tracking</h3>
+                                            <p className="text-green-600">
+                                                {(() => {
+                                                    const ticket = tickets.find(t => t.id === activeTimer.ticketId);
+                                                    const task = ticket?.plan.tasks.find(task => task.id === activeTimer.taskId);
+                                                    return task?.title || 'Unknown task';
+                                                })()}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center space-x-4">
+                                            <div className="text-3xl font-bold text-green-700">
+                                                {formatTime(Math.floor((Date.now() - activeTimer.startTime) / 1000))}
+                                            </div>
+                                            <button
+                                                onClick={stopTimer}
+                                                className="bg-gradient-to-r from-red-500 to-pink-500 text-white px-6 py-3 rounded-2xl hover:shadow-lg transform hover:scale-105 transition-all duration-300"
+                                            >
+                                                Stop Timer
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -1818,29 +1862,65 @@ Respond with a helpful message (not JSON this time).`
                 {currentView === 'calendar' && (
                     <div className="space-y-8">
                         <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
-                            <div className="flex items-center justify-between mb-8">
-                                <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                                    {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-                                </h2>
+                            <div className="space-y-4 mb-8">
+                                <div className="flex items-center justify-between">
+                                    <h2 className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                        {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                                    </h2>
+                                    <div className="flex items-center space-x-3">
+                                        <button
+                                            onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))}
+                                            className="p-3 hover:bg-purple-100 rounded-xl transform hover:scale-110 transition-all duration-300"
+                                        >
+                                            <ChevronLeft className="w-5 h-5" />
+                                        </button>
+                                        <button
+                                            onClick={() => setCurrentDate(new Date())}
+                                            className="px-4 py-2 text-sm bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
+                                        >
+                                            Today
+                                        </button>
+                                        <button
+                                            onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))}
+                                            className="p-3 hover:bg-purple-100 rounded-xl transform hover:scale-110 transition-all duration-300"
+                                        >
+                                            <ChevronRight className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Project Filter */}
                                 <div className="flex items-center space-x-3">
-                                    <button
-                                        onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))}
-                                        className="p-3 hover:bg-purple-100 rounded-xl transform hover:scale-110 transition-all duration-300"
-                                    >
-                                        <ChevronLeft className="w-5 h-5" />
-                                    </button>
-                                    <button
-                                        onClick={() => setCurrentDate(new Date())}
-                                        className="px-4 py-2 text-sm bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
-                                    >
-                                        Today
-                                    </button>
-                                    <button
-                                        onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))}
-                                        className="p-3 hover:bg-purple-100 rounded-xl transform hover:scale-110 transition-all duration-300"
-                                    >
-                                        <ChevronRight className="w-5 h-5" />
-                                    </button>
+                                    <span className="text-sm font-medium text-gray-600">Filter by project:</span>
+                                    <div className="flex flex-wrap gap-2">
+                                        <button
+                                            onClick={() => setCalendarProjectFilter('all')}
+                                            className={`px-4 py-2 text-sm rounded-xl font-medium transition-all duration-300 ${
+                                                calendarProjectFilter === 'all'
+                                                    ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
+                                                    : 'bg-white/50 text-gray-600 hover:bg-white/70 border border-gray-300'
+                                            }`}
+                                        >
+                                            All Projects
+                                        </button>
+                                        {tickets.map((ticket, index) => {
+                                            const projectColor = getProjectColor(index);
+                                            return (
+                                                <button
+                                                    key={ticket.id}
+                                                    onClick={() => setCalendarProjectFilter(ticket.id.toString())}
+                                                    className={`px-4 py-2 text-sm rounded-xl font-medium transition-all duration-300 flex items-center space-x-2 ${
+                                                        calendarProjectFilter === ticket.id.toString()
+                                                            ? `bg-gradient-to-r ${projectColor.bg} text-white shadow-lg`
+                                                            : 'bg-white/50 text-gray-600 hover:bg-white/70 border border-gray-300'
+                                                    }`}
+                                                >
+                                                    <div className={`w-3 h-3 rounded-full bg-gradient-to-r ${projectColor.bg}`}></div>
+                                                    <span>{ticket.title}</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
 
@@ -1897,15 +1977,18 @@ Respond with a helpful message (not JSON this time).`
                                                                 className={`text-xs p-2 rounded-lg truncate cursor-pointer transition-all duration-300 transform hover:scale-105 ${
                                                                     dateTask.completed
                                                                         ? 'bg-gradient-to-r from-green-400 to-emerald-500 text-white shadow-lg'
-                                                                        : 'bg-gradient-to-r from-blue-400 to-indigo-500 text-white shadow-lg'
+                                                                        : `bg-gradient-to-r ${dateTask.projectColor.bg} text-white shadow-lg`
                                                                 }`}
-                                                                title={dateTask.title}
+                                                                title={`${dateTask.projectName}: ${dateTask.title}`}
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
                                                                     toggleTaskComplete(dateTask.ticketId, dateTask.id);
                                                                 }}
                                                             >
-                                                                {dateTask.title}
+                                                                <div className="flex items-center space-x-1">
+                                                                    <div className="w-2 h-2 bg-white/30 rounded-full flex-shrink-0"></div>
+                                                                    <span className="truncate">{dateTask.title}</span>
+                                                                </div>
                                                             </div>
                                                         ))}
                                                         {tasksForDate.length > 2 && (
@@ -1941,155 +2024,155 @@ Respond with a helpful message (not JSON this time).`
                     </div>
                 )}
 
-                {currentView === 'projects' && (
-                    <div className="space-y-8">
-                        {/* Enhanced Gantt Chart */}
-                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
-                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
-                                Project Timeline (Gantt Chart)
-                            </h3>
-                            {tickets.length > 0 ? (
-                                <div className="overflow-x-auto">
-                                    <div className="min-w-full">
-                                        {tickets.map(ticket => {
-                                            const startDate = new Date(ticket.created);
-                                            const endDate = new Date(ticket.deadline);
-                                            // const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+                {/*{currentView === 'projects' && (*/}
+                {/*    <div className="space-y-8">*/}
+                {/*        /!* Enhanced Gantt Chart *!/*/}
+                {/*        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">*/}
+                {/*            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">*/}
+                {/*                Project Timeline (Gantt Chart)*/}
+                {/*            </h3>*/}
+                {/*            {tickets.length > 0 ? (*/}
+                {/*                <div className="overflow-x-auto">*/}
+                {/*                    <div className="min-w-full">*/}
+                {/*                        {tickets.map(ticket => {*/}
+                {/*                            const startDate = new Date(ticket.created);*/}
+                {/*                            const endDate = new Date(ticket.deadline);*/}
+                {/*                            // const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));*/}
 
-                                            return (
-                                                <div key={ticket.id} className="flex items-center mb-6 group">
-                                                    <div className="w-64 flex-shrink-0 pr-6">
-                                                        <h4 className="font-bold text-gray-800 text-lg mb-2">{ticket.title}</h4>
-                                                        <div className="flex items-center space-x-2">
-                                                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${getPriorityColor(ticket.priority)} shadow-lg`}></div>
-                                                            <p className="text-sm text-gray-600">{ticket.progress}% complete</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex-1 relative h-12 bg-gradient-to-r from-gray-200 to-gray-300 rounded-xl cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden">
-                                                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 rounded-xl shadow-lg transform hover:scale-105 transition-all duration-300">
-                                                            <LiquidProgressBar
-                                                                progress={ticket.progress}
-                                                                className="h-full rounded-xl"
-                                                                colors="from-purple-600 via-pink-600 to-purple-700"
-                                                            />
-                                                        </div>
-                                                        <div className="absolute inset-0 flex items-center justify-center">
-                                                            <span className="text-sm text-white font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">
-                                                                {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}
-                                                            </span>
-                                                        </div>
-                                                        {/* Deadline indicator */}
-                                                        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
-                                                            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-bounce shadow-lg"></div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="text-center py-12 text-gray-500">
-                                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-                                    <p className="text-lg">No projects to display in timeline</p>
-                                </div>
-                            )}
-                        </div>
+                {/*                            return (*/}
+                {/*                                <div key={ticket.id} className="flex items-center mb-6 group">*/}
+                {/*                                    <div className="w-64 flex-shrink-0 pr-6">*/}
+                {/*                                        <h4 className="font-bold text-gray-800 text-lg mb-2">{ticket.title}</h4>*/}
+                {/*                                        <div className="flex items-center space-x-2">*/}
+                {/*                                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${getPriorityColor(ticket.priority)} shadow-lg`}></div>*/}
+                {/*                                            <p className="text-sm text-gray-600">{ticket.progress}% complete</p>*/}
+                {/*                                        </div>*/}
+                {/*                                    </div>*/}
+                {/*                                    <div className="flex-1 relative h-12 bg-gradient-to-r from-gray-200 to-gray-300 rounded-xl cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden">*/}
+                {/*                                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 rounded-xl shadow-lg transform hover:scale-105 transition-all duration-300">*/}
+                {/*                                            <LiquidProgressBar*/}
+                {/*                                                progress={ticket.progress}*/}
+                {/*                                                className="h-full rounded-xl"*/}
+                {/*                                                colors="from-purple-600 via-pink-600 to-purple-700"*/}
+                {/*                                            />*/}
+                {/*                                        </div>*/}
+                {/*                                        <div className="absolute inset-0 flex items-center justify-center">*/}
+                {/*                                            <span className="text-sm text-white font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">*/}
+                {/*                                                {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}*/}
+                {/*                                            </span>*/}
+                {/*                                        </div>*/}
+                {/*                                        /!* Deadline indicator *!/*/}
+                {/*                                        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">*/}
+                {/*                                            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-bounce shadow-lg"></div>*/}
+                {/*                                        </div>*/}
+                {/*                                    </div>*/}
+                {/*                                </div>*/}
+                {/*                            );*/}
+                {/*                        })}*/}
+                {/*                    </div>*/}
+                {/*                </div>*/}
+                {/*            ) : (*/}
+                {/*                <div className="text-center py-12 text-gray-500">*/}
+                {/*                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />*/}
+                {/*                    <p className="text-lg">No projects to display in timeline</p>*/}
+                {/*                </div>*/}
+                {/*            )}*/}
+                {/*        </div>*/}
 
-                        {/* Enhanced Project Cards */}
-                        <div className="grid md:grid-cols-2 gap-8">
-                            {tickets.map(ticket => (
-                                <div key={ticket.id} className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 border border-white/30 shadow-xl hover:shadow-2xl transform hover:scale-[1.02] transition-all duration-300 group">
-                                    <div className="flex items-center justify-between mb-6">
-                                        <h3 className="text-2xl font-bold text-gray-800">{ticket.title}</h3>
-                                        <div className="flex items-center space-x-3">
-                                            <span className="text-sm text-gray-600 bg-white/50 px-3 py-1 rounded-xl">
-                                                Due: {ticket.deadline}
-                                            </span>
-                                            {getPriorityIcon(ticket.priority)}
-                                        </div>
-                                    </div>
+                {/*        /!* Enhanced Project Cards *!/*/}
+                {/*        <div className="grid md:grid-cols-2 gap-8">*/}
+                {/*            {tickets.map(ticket => (*/}
+                {/*                <div key={ticket.id} className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 border border-white/30 shadow-xl hover:shadow-2xl transform hover:scale-[1.02] transition-all duration-300 group">*/}
+                {/*                    <div className="flex items-center justify-between mb-6">*/}
+                {/*                        <h3 className="text-2xl font-bold text-gray-800">{ticket.title}</h3>*/}
+                {/*                        <div className="flex items-center space-x-3">*/}
+                {/*                            <span className="text-sm text-gray-600 bg-white/50 px-3 py-1 rounded-xl">*/}
+                {/*                                Due: {ticket.deadline}*/}
+                {/*                            </span>*/}
+                {/*                            {getPriorityIcon(ticket.priority)}*/}
+                {/*                        </div>*/}
+                {/*                    </div>*/}
 
-                                    {/* Radial Progress */}
-                                    <div className="flex items-center justify-center mb-6">
-                                        <div className="relative w-32 h-32">
-                                            <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 36 36">
-                                                <path
-                                                    d="m18,2.0845
-                                                    a 15.9155,15.9155 0 0,1 0,31.831
-                                                    a 15.9155,15.9155 0 0,1 0,-31.831"
-                                                    fill="none"
-                                                    stroke="rgba(156, 163, 175, 0.3)"
-                                                    strokeWidth="3"
-                                                />
-                                                <path
-                                                    d="m18,2.0845
-                                                    a 15.9155,15.9155 0 0,1 0,31.831
-                                                    a 15.9155,15.9155 0 0,1 0,-31.831"
-                                                    fill="none"
-                                                    stroke="url(#gradient)"
-                                                    strokeWidth="3"
-                                                    strokeDasharray={`${ticket.progress}, 100`}
-                                                    strokeDashoffset="0"
-                                                    strokeLinecap="round"
-                                                    className="transition-all duration-1000 ease-out"
-                                                />
-                                                <defs>
-                                                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                                        <stop offset="0%" stopColor="#8b5cf6" />
-                                                        <stop offset="100%" stopColor="#ec4899" />
-                                                    </linearGradient>
-                                                </defs>
-                                            </svg>
-                                            <div className="absolute inset-0 flex items-center justify-center">
-                                                <span className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-                                                    {ticket.progress}%
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
+                {/*                    /!* Radial Progress *!/*/}
+                {/*                    <div className="flex items-center justify-center mb-6">*/}
+                {/*                        <div className="relative w-32 h-32">*/}
+                {/*                            <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 36 36">*/}
+                {/*                                <path*/}
+                {/*                                    d="m18,2.0845*/}
+                {/*                                    a 15.9155,15.9155 0 0,1 0,31.831*/}
+                {/*                                    a 15.9155,15.9155 0 0,1 0,-31.831"*/}
+                {/*                                    fill="none"*/}
+                {/*                                    stroke="rgba(156, 163, 175, 0.3)"*/}
+                {/*                                    strokeWidth="3"*/}
+                {/*                                />*/}
+                {/*                                <path*/}
+                {/*                                    d="m18,2.0845*/}
+                {/*                                    a 15.9155,15.9155 0 0,1 0,31.831*/}
+                {/*                                    a 15.9155,15.9155 0 0,1 0,-31.831"*/}
+                {/*                                    fill="none"*/}
+                {/*                                    stroke="url(#gradient)"*/}
+                {/*                                    strokeWidth="3"*/}
+                {/*                                    strokeDasharray={`${ticket.progress}, 100`}*/}
+                {/*                                    strokeDashoffset="0"*/}
+                {/*                                    strokeLinecap="round"*/}
+                {/*                                    className="transition-all duration-1000 ease-out"*/}
+                {/*                                />*/}
+                {/*                                <defs>*/}
+                {/*                                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">*/}
+                {/*                                        <stop offset="0%" stopColor="#8b5cf6" />*/}
+                {/*                                        <stop offset="100%" stopColor="#ec4899" />*/}
+                {/*                                    </linearGradient>*/}
+                {/*                                </defs>*/}
+                {/*                            </svg>*/}
+                {/*                            <div className="absolute inset-0 flex items-center justify-center">*/}
+                {/*                                <span className="text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">*/}
+                {/*                                    {ticket.progress}%*/}
+                {/*                                </span>*/}
+                {/*                            </div>*/}
+                {/*                        </div>*/}
+                {/*                    </div>*/}
 
-                                    {/* Phase Progress */}
-                                    <div className="space-y-4">
-                                        {ticket.plan.phases.slice(0, 3).map((phase, index) => {
-                                            const isCurrentPhase = !phase.completed && !ticket.plan.phases.slice(0, index).some(p => !p.completed);
-                                            return (
-                                                <div key={phase.id} className="flex items-center space-x-4">
-                                                    <div className={`w-4 h-4 rounded-full transition-all duration-300 shadow-lg ${
-                                                        phase.completed
-                                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500'
-                                                            : isCurrentPhase
-                                                                ? `bg-gradient-to-r ${getPhaseColor(phase.name, index)} animate-pulse`
-                                                                : 'bg-gray-400'
-                                                    }`}></div>
-                                                    <div className="flex-1">
-                                                        <span className={`text-sm font-medium ${
-                                                            phase.completed
-                                                                ? 'line-through text-gray-500'
-                                                                : isCurrentPhase
-                                                                    ? 'text-purple-600 font-bold'
-                                                                    : 'text-gray-700'
-                                                        }`}>
-                                                            {phase.name}
-                                                            {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Active</span>}
-                                                        </span>
-                                                        <div className="mt-1">
-                                                            <LiquidProgressBar
-                                                                progress={phase.completed ? 100 : (isCurrentPhase ? 50 : 0)}
-                                                                className="h-1"
-                                                                colors={getPhaseColor(phase.name, index)}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                {/*                    /!* Phase Progress *!/*/}
+                {/*                    <div className="space-y-4">*/}
+                {/*                        {ticket.plan.phases.slice(0, 3).map((phase, index) => {*/}
+                {/*                            const isCurrentPhase = !phase.completed && !ticket.plan.phases.slice(0, index).some(p => !p.completed);*/}
+                {/*                            return (*/}
+                {/*                                <div key={phase.id} className="flex items-center space-x-4">*/}
+                {/*                                    <div className={`w-4 h-4 rounded-full transition-all duration-300 shadow-lg ${*/}
+                {/*                                        phase.completed*/}
+                {/*                                            ? 'bg-gradient-to-r from-green-400 to-emerald-500'*/}
+                {/*                                            : isCurrentPhase*/}
+                {/*                                                ? `bg-gradient-to-r ${getPhaseColor(phase.name, index)} animate-pulse`*/}
+                {/*                                                : 'bg-gray-400'*/}
+                {/*                                    }`}></div>*/}
+                {/*                                    <div className="flex-1">*/}
+                {/*                                        <span className={`text-sm font-medium ${*/}
+                {/*                                            phase.completed*/}
+                {/*                                                ? 'line-through text-gray-500'*/}
+                {/*                                                : isCurrentPhase*/}
+                {/*                                                    ? 'text-purple-600 font-bold'*/}
+                {/*                                                    : 'text-gray-700'*/}
+                {/*                                        }`}>*/}
+                {/*                                            {phase.name}*/}
+                {/*                                            {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Active</span>}*/}
+                {/*                                        </span>*/}
+                {/*                                        <div className="mt-1">*/}
+                {/*                                            <LiquidProgressBar*/}
+                {/*                                                progress={phase.completed ? 100 : (isCurrentPhase ? 50 : 0)}*/}
+                {/*                                                className="h-1"*/}
+                {/*                                                colors={getPhaseColor(phase.name, index)}*/}
+                {/*                                            />*/}
+                {/*                                        </div>*/}
+                {/*                                    </div>*/}
+                {/*                                </div>*/}
+                {/*                            );*/}
+                {/*                        })}*/}
+                {/*                    </div>*/}
+                {/*                </div>*/}
+                {/*            ))}*/}
+                {/*        </div>*/}
+                {/*    </div>*/}
+                {/*)}*/}
 
                 {currentView === 'analytics' && (
                     <div className="space-y-8">
@@ -2261,6 +2344,56 @@ Respond with a helpful message (not JSON this time).`
                                     </div>
                                 </div>
                             </div>
+                        </div>
+                        {/* Gantt Chart - Moved from Projects */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
+                                Project Timeline (Gantt Chart)
+                            </h3>
+                            {tickets.length > 0 ? (
+                                <div className="overflow-x-auto">
+                                    <div className="min-w-full">
+                                        {tickets.map(ticket => {
+                                            const startDate = new Date(ticket.created);
+                                            const endDate = new Date(ticket.deadline);
+
+                                            return (
+                                                <div key={ticket.id} className="flex items-center mb-6 group">
+                                                    <div className="w-64 flex-shrink-0 pr-6">
+                                                        <h4 className="font-bold text-gray-800 text-lg mb-2">{ticket.title}</h4>
+                                                        <div className="flex items-center space-x-2">
+                                                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${getPriorityColor(ticket.priority)} shadow-lg`}></div>
+                                                            <p className="text-sm text-gray-600">{ticket.progress}% complete</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex-1 relative h-12 bg-gradient-to-r from-gray-200 to-gray-300 rounded-xl cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden">
+                                                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 rounded-xl shadow-lg transform hover:scale-105 transition-all duration-300">
+                                                            <LiquidProgressBar
+                                                                progress={ticket.progress}
+                                                                className="h-full rounded-xl"
+                                                                colors="from-purple-600 via-pink-600 to-purple-700"
+                                                            />
+                                                        </div>
+                                                        <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className="text-sm text-white font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">
+                                        {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}
+                                    </span>
+                                                        </div>
+                                                        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                                                            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-bounce shadow-lg"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-center py-12 text-gray-500">
+                                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                                    <p className="text-lg">No projects to display in timeline</p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -2462,50 +2595,141 @@ Respond with a helpful message (not JSON this time).`
 
             {showAddTaskToDate && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-8 w-full max-w-md mx-4 shadow-2xl border border-white/30">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-8 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto shadow-2xl border border-white/30">
                         <div className="flex items-center justify-between mb-6">
-                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">Add Task</h3>
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                {selectedDate?.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                            </h3>
                             <button
-                                onClick={() => setShowAddTaskToDate(false)}
+                                onClick={() => {
+                                    setShowAddTaskToDate(false);
+                                    setSelectedDate(null);
+                                }}
                                 className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
                             >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
-                        <div className="space-y-4">
-                            <div>
-                                <p className="text-sm text-gray-600 mb-3">
-                                    Adding task for {selectedDate?.toLocaleDateString()}
-                                </p>
+                        {/* Tasks for Selected Date */}
+                        <div className="space-y-6">
+                            {(() => {
+                                const tasksForSelectedDate = getTasksForDate(selectedDate);
+                                const groupedTasks = {};
+
+                                // Group tasks by project
+                                tasksForSelectedDate.forEach(task => {
+                                    if (!groupedTasks[task.projectName]) {
+                                        groupedTasks[task.projectName] = {
+                                            tasks: [],
+                                            ticketId: task.ticketId,
+                                            projectColor: task.projectColor
+                                        };
+                                    }
+                                    groupedTasks[task.projectName].tasks.push(task);
+                                });
+
+                                return Object.keys(groupedTasks).length > 0 ? (
+                                    Object.entries(groupedTasks).map(([projectName, data]) => (
+                                        <div key={data.ticketId} className="space-y-3">
+                                            <div className="flex items-center space-x-2">
+                                                <div className={`w-4 h-4 rounded-full bg-gradient-to-r ${data.projectColor.bg}`}></div>
+                                                <h4 className="font-bold text-gray-800">{projectName}</h4>
+                                            </div>
+                                            <div className="space-y-2 ml-6">
+                                                {data.tasks.map(task => (
+                                                    <div key={task.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                                        <div className="flex items-center space-x-3">
+                                                            <button
+                                                                onClick={() => toggleTaskComplete(task.ticketId, task.id)}
+                                                                className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-300 ${
+                                                                    task.completed
+                                                                        ? 'bg-gradient-to-r from-green-400 to-emerald-500 border-green-400'
+                                                                        : 'border-gray-300 hover:border-purple-400'
+                                                                }`}
+                                                            >
+                                                                {task.completed && <CheckCircle className="w-3 h-3 text-white" />}
+                                                            </button>
+                                                            <span className={`${task.completed ? 'line-through text-gray-500' : 'text-gray-700'}`}>
+                                                    {task.title}
+                                                </span>
+                                                        </div>
+                                                        <div className="flex items-center space-x-2">
+                                                            {!activeTimer || (activeTimer.taskId !== task.id || activeTimer.ticketId !== task.ticketId) ? (
+                                                                <button
+                                                                    onClick={() => startTimer(task.id, task.ticketId)}
+                                                                    className="text-gray-400 hover:text-green-600 transition-colors"
+                                                                >
+                                                                    <Clock className="w-4 h-4" />
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={stopTimer}
+                                                                    className="text-green-600 hover:text-red-600 transition-colors"
+                                                                >
+                                                                    <X className="w-4 h-4" />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="text-center py-8">
+                                        <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                                        <p className="text-gray-500">No tasks scheduled for this date</p>
+                                    </div>
+                                );
+                            })()}
+                        </div>
+
+                        {/* Add New Task */}
+                        <div className="mt-6 pt-6 border-t border-gray-200">
+                            <h4 className="font-medium text-gray-700 mb-3">Add task for this date</h4>
+                            <div className="flex space-x-3">
+                                <select
+                                    className="px-3 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                    value=""
+                                    onChange={(e) => {
+                                        const ticketId = parseInt(e.target.value);
+                                        if (ticketId) {
+                                            const ticket = tickets.find(t => t.id === ticketId);
+                                            const currentPhase = ticket.plan.phases.find(p => !p.completed);
+                                            if (currentPhase) {
+                                                const newTask = {
+                                                    id: Date.now(),
+                                                    title: newDateTask || 'New Task',
+                                                    phase: currentPhase.id,
+                                                    completed: false,
+                                                    deadline: selectedDate.toISOString().split('T')[0]
+                                                };
+
+                                                setTickets(prev => prev.map(t =>
+                                                    t.id === ticketId
+                                                        ? { ...t, plan: { ...t.plan, tasks: [...t.plan.tasks, newTask] } }
+                                                        : t
+                                                ));
+
+                                                setNewDateTask('');
+                                                addNotification('Task added successfully', 'success');
+                                            }
+                                        }
+                                    }}
+                                >
+                                    <option value="">Select project...</option>
+                                    {tickets.map(ticket => (
+                                        <option key={ticket.id} value={ticket.id}>{ticket.title}</option>
+                                    ))}
+                                </select>
                                 <input
                                     type="text"
                                     value={newDateTask}
                                     onChange={(e) => setNewDateTask(e.target.value)}
-                                    placeholder="Enter task description..."
-                                    className="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-purple-400 bg-white/70 backdrop-blur-sm"
+                                    placeholder="Task description..."
+                                    className="flex-1 px-4 py-2 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-400"
                                 />
-                            </div>
-
-                            <div className="flex space-x-3">
-                                <button
-                                    onClick={() => {
-                                        // Add task to date functionality (you'd need to implement this)
-                                        addNotification('Task added to calendar', 'success');
-                                        setNewDateTask('');
-                                        setShowAddTaskToDate(false);
-                                        setSelectedDate(null);
-                                    }}
-                                    className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-lg transform hover:scale-105 transition-all duration-300"
-                                >
-                                    Add Task
-                                </button>
-                                <button
-                                    onClick={() => setShowAddTaskToDate(false)}
-                                    className="px-6 py-3 border border-gray-300 text-gray-700 rounded-2xl font-medium hover:bg-gray-50 transition-all duration-300 transform hover:scale-105"
-                                >
-                                    Cancel
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -2665,6 +2889,30 @@ Respond with a helpful message (not JSON this time).`
 
                 .animate-reverse {
                     animation-direction: reverse;
+                }
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 6px;
+                }
+                
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background: rgba(0, 0, 0, 0.05);
+                    border-radius: 3px;
+                }
+                
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background: rgba(147, 51, 234, 0.3);
+                    border-radius: 3px;
+                }
+                
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                    background: rgba(147, 51, 234, 0.5);
+                }
+                
+                .line-clamp-1 {
+                    overflow: hidden;
+                    display: -webkit-box;
+                    -webkit-line-clamp: 1;
+                    -webkit-box-orient: vertical;
                 }
             `}</style>
         </div>
