@@ -4,6 +4,7 @@ import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { NoteIcon, NoteEditor, NotesSidebar } from './Notes/NoteComponents';
 // Add this at the top of your component
+
 const formatDateForInput = (dateString) => {
     if (!dateString) return '';
 
@@ -239,13 +240,13 @@ const ResearchTodoApp = () => {
             setNotes([]); // Set empty array on error
         }
     };
-    
+
     // Note functions
     const handleNoteClick = (type, id, ticketId) => {
         setNoteTarget({ type, id, ticketId });
         setEditingNote({ type, id, ticketId });
     };
-    
+
     const handleNoteSave = async (content) => {
         if (noteTarget) {
             await loadTickets();
@@ -253,12 +254,12 @@ const ResearchTodoApp = () => {
             addNotification('📝 Note saved successfully!', 'success');
         }
     };
-    
+
     const handleNoteClose = () => {
         setEditingNote(null);
         setNoteTarget(null);
     };
-    
+
     const handleNoteDelete = async () => {
         await loadTickets();
         await loadNotes();
@@ -266,15 +267,15 @@ const ResearchTodoApp = () => {
         setNoteTarget(null);
         addNotification('🗑️ Note deleted successfully!', 'success');
     };
-    
+
     const openNotesSidebar = () => {
         setShowNotesSidebar(true);
     };
-    
+
     const handleNoteExport = () => {
         addNotification('📄 Notes exported successfully!', 'success');
     };
-    
+
     // Check if task or phase has a note
     const hasNote = (type, id) => {
         // Safety check: ensure tickets exists and is an array
@@ -322,14 +323,18 @@ const ResearchTodoApp = () => {
                 title: newTicket.title,
                 description: newTicket.description,
                 priority: newTicket.priority,
-                deadline: newTicket.deadline,
+                deadline: formatDateForInput(newTicket.deadline),
                 created: newTicket.created_at?.split('T')[0],
                 status: newTicket.status,
                 progress: newTicket.progress || 0,
                 estimatedHours: newTicket.estimated_hours,
                 plan: {
                     phases: newTicket.phases || [],
-                    tasks: newTicket.tasks || []
+                    tasks: (newTicket.tasks || []).map(task => ({
+                        ...task,
+                        phase: task.phase_id || task.phase, // Handle both phase_id and phase
+                        deadline: formatDateForInput(task.deadline)
+                    }))
                 }
             };
 
@@ -1060,7 +1065,7 @@ Respond with a helpful message (not JSON this time).`
                                     </button>
                                 </div>
                             )}
-          
+
 
                             <button
                                 onClick={openNotesSidebar}
@@ -1294,8 +1299,9 @@ Respond with a helpful message (not JSON this time).`
                                                         />
                                                     ) : (
                                                         <h3
-                                                            className={`font-semibold text-lg cursor-pointer hover:text-purple-600 transition-colors ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}
+                                                            className={`font-semibold text-lg cursor-pointer hover:text-purple-600 hover:underline transition-colors ${task.completed ? 'line-through text-gray-500' : 'text-gray-800'}`}
                                                             onDoubleClick={() => setEditingTask(`${task.ticketId}-${task.id}`)}
+                                                            title="Double-click to edit"
                                                         >
                                                             {task.title}
                                                         </h3>
@@ -1482,26 +1488,53 @@ Respond with a helpful message (not JSON this time).`
                                                                     }`}
                                                                 ></button>
                                                                 {editingPhase === `${ticket.id}-${phase.id}` ? (
-                                                                    <input
-                                                                        type="text"
-                                                                        value={phase.name}
-                                                                        onChange={(e) => {
-                                                                            const updatedTickets = tickets.map(t =>
-                                                                                t.id === ticket.id
-                                                                                    ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, name: e.target.value } : p) } }
-                                                                                    : t
-                                                                            );
-                                                                            setTickets(updatedTickets);
-                                                                        }}
-                                                                        onBlur={() => setEditingPhase(null)}
-                                                                        onKeyPress={(e) => e.key === 'Enter' && setEditingPhase(null)}
-                                                                        className="text-sm border-b border-purple-300 focus:outline-none bg-transparent"
-                                                                        autoFocus
-                                                                    />
+                                                                    <div className="flex-1 space-y-2">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={phase.name}
+                                                                            onChange={(e) => {
+                                                                                const updatedTickets = tickets.map(t =>
+                                                                                    t.id === ticket.id
+                                                                                        ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, name: e.target.value } : p) } }
+                                                                                        : t
+                                                                                );
+                                                                                setTickets(updatedTickets);
+                                                                            }}
+                                                                            className="text-sm border-b border-purple-300 focus:outline-none bg-transparent"
+                                                                        />
+                                                                        <div className="flex space-x-2">
+                                                                            <input
+                                                                                type="date"
+                                                                                value={phase.start_date}
+                                                                                onChange={(e) => {
+                                                                                    const updatedTickets = tickets.map(t =>
+                                                                                        t.id === ticket.id
+                                                                                            ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, start_date: e.target.value } : p) } }
+                                                                                            : t
+                                                                                    );
+                                                                                    setTickets(updatedTickets);
+                                                                                }}
+                                                                                className="text-xs border-b border-purple-300 focus:outline-none bg-transparent"
+                                                                            />
+                                                                            <input
+                                                                                type="date"
+                                                                                value={phase.end_date}
+                                                                                onChange={(e) => {
+                                                                                    const updatedTickets = tickets.map(t =>
+                                                                                        t.id === ticket.id
+                                                                                            ? { ...t, plan: { ...t.plan, phases: t.plan.phases.map(p => p.id === phase.id ? { ...p, end_date: e.target.value } : p) } }
+                                                                                            : t
+                                                                                    );
+                                                                                    setTickets(updatedTickets);
+                                                                                }}
+                                                                                className="text-xs border-b border-purple-300 focus:outline-none bg-transparent"
+                                                                            />
+                                                                        </div>
+                                                                    </div>
                                                                 ) : (
                                                                     <>
                                                                         <span
-                                                                            className={`cursor-pointer hover:text-purple-600 transition-colors font-medium ${
+                                                                            className={`cursor-pointer hover:text-purple-600 hover:underline transition-colors font-medium ${
                                                                                 phase.completed
                                                                                     ? 'line-through text-gray-500'
                                                                                     : isCurrentPhase
@@ -1515,7 +1548,7 @@ Respond with a helpful message (not JSON this time).`
                                                                                 setSelectedPhase(selectedPhase === phaseKey ? null : phaseKey);
                                                                             }}
                                                                             onDoubleClick={() => setEditingPhase(`${ticket.id}-${phase.id}`)}
-                                                                            title={`Click to view tasks • ${completedPhaseTasks}/${phaseTasks.length} tasks completed`}
+                                                                            title={`Click to view tasks • Double-click to edit phase details • ${completedPhaseTasks}/${phaseTasks.length} tasks completed`}
                                                                         >
                                                                             {phase.name}
                                                                             {isCurrentPhase && <span className="ml-2 text-xs animate-bounce">← Current</span>}
