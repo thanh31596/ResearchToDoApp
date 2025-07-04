@@ -190,8 +190,8 @@ class ApiService {
     }
 
     async getTimeSummary(date) {
-        const queryParam = date ? `?date=${date}` : '';
-        return this.apiCall(`/time-tracking/summary${queryParam}`);
+        const params = date ? `?date=${date}` : '';
+        return this.apiCall(`/time-tracking/summary${params}`);
     }
 
     // AI methods

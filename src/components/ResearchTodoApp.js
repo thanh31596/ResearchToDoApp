@@ -123,12 +123,18 @@ const ResearchTodoApp = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [calendarProjectFilter, setCalendarProjectFilter] = useState('all'); // 'all' or specific project ID
 
+    const [dailyTimeData, setDailyTimeData] = useState([]);
+    const [timeByPhase, setTimeByPhase] = useState({});
+    const [riskAnalysis, setRiskAnalysis] = useState({});
+    const [whatIfHours, setWhatIfHours] = useState(2); // Extra hours per day
+    const [selectedRiskProject, setSelectedRiskProject] = useState(null);
     // Load data from backend on component mount
     useEffect(() => {
         loadTickets();
         loadActiveTimer();
         loadTimeSummary();
         loadNotes(); // ADD THIS LINE
+        loadTimeAnalytics(); // ADD THIS LINE
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
 
@@ -154,7 +160,123 @@ const ResearchTodoApp = () => {
             document.removeEventListener('mousedown', handleClickOutside);
         };
     }, [showUserMenu]);
+    // Calculate risk scores when tickets change
+    useEffect(() => {
+        const risks = {};
+        tickets.forEach(ticket => {
+            risks[ticket.id] = calculateDeadlineRisk(ticket);
+        });
+        setRiskAnalysis(risks);
+    }, [tickets]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Calculate deadline risk score for a project
+    const calculateDeadlineRisk = (ticket) => {
+        const today = new Date();
+        const deadline = new Date(ticket.deadline);
+        const created = new Date(ticket.created);
 
+        // Calculate progress metrics
+        const totalDays = Math.max(1, (deadline - created) / (1000 * 60 * 60 * 24));
+        const daysElapsed = Math.max(0, (today - created) / (1000 * 60 * 60 * 24));
+        const daysRemaining = Math.max(0, (deadline - today) / (1000 * 60 * 60 * 24));
+        const timeProgress = Math.min(100, (daysElapsed / totalDays) * 100);
+
+        // Calculate task metrics
+        const incompleteTasks = ticket.plan.tasks.filter(t => !t.completed).length;
+        const totalTasks = ticket.plan.tasks.length;
+        const taskProgress = ticket.progress;
+
+        // Calculate phase slippage
+        let phaseSlippage = 0;
+        ticket.plan.phases.forEach(phase => {
+            if (!phase.completed && new Date(phase.end_date) < today) {
+                phaseSlippage++;
+            }
+        });
+
+        // Risk calculation (rule-based model)
+        let riskScore = 0;
+
+        // Time vs progress discrepancy (weight: 40%)
+        const progressDiscrepancy = timeProgress - taskProgress;
+        if (progressDiscrepancy > 30) riskScore += 40;
+        else if (progressDiscrepancy > 20) riskScore += 30;
+        else if (progressDiscrepancy > 10) riskScore += 20;
+        else if (progressDiscrepancy > 0) riskScore += 10;
+
+        // Days remaining (weight: 30%)
+        if (daysRemaining < 3) riskScore += 30;
+        else if (daysRemaining < 7) riskScore += 20;
+        else if (daysRemaining < 14) riskScore += 10;
+
+        // Incomplete tasks (weight: 20%)
+        const incompleteRatio = incompleteTasks / Math.max(1, totalTasks);
+        if (incompleteRatio > 0.7) riskScore += 20;
+        else if (incompleteRatio > 0.5) riskScore += 15;
+        else if (incompleteRatio > 0.3) riskScore += 10;
+
+        // Phase slippage (weight: 10%)
+        if (phaseSlippage > 2) riskScore += 10;
+        else if (phaseSlippage > 0) riskScore += 5;
+
+        // Already overdue
+        if (today > deadline) riskScore = Math.max(riskScore, 80);
+
+        return {
+            score: Math.min(100, riskScore),
+            level: riskScore >= 70 ? 'high' : riskScore >= 40 ? 'medium' : 'low',
+            daysRemaining,
+            progressDiscrepancy: Math.round(progressDiscrepancy),
+            incompleteTasks,
+            phaseSlippage
+        };
+    };
+
+
+    // Calculate productivity metrics from real data
+    const calculateProductivityMetrics = () => {
+        const totalTimeSeconds = Object.values(timeSpent).reduce((sum, time) => sum + time, 0);
+
+        // Time by project from actual data
+        const timeByProject = {};
+        Object.entries(timeSpent).forEach(([key, seconds]) => {
+            const [ticketId] = key.split('-');
+            const ticket = tickets.find(t => t.id === parseInt(ticketId));
+            if (ticket) {
+                if (!timeByProject[ticket.title]) {
+                    timeByProject[ticket.title] = {
+                        seconds: 0,
+                        priority: ticket.priority,
+                        ticketId: ticket.id
+                    };
+                }
+                timeByProject[ticket.title].seconds += seconds;
+            }
+        });
+
+        // Calculate focus ratio (time on high priority)
+        const highPriorityTime = Object.values(timeByProject)
+            .filter(p => p.priority === 'High')
+            .reduce((sum, p) => sum + p.seconds, 0);
+        const focusRatio = totalTimeSeconds > 0 ? (highPriorityTime / totalTimeSeconds * 100).toFixed(1) : 0;
+
+        // Calculate average daily hours from real data
+        const totalDailySeconds = dailyTimeData.reduce((sum, day) => sum + day.seconds, 0);
+        const avgDailyHours = dailyTimeData.length > 0 ? (totalDailySeconds / dailyTimeData.length / 3600).toFixed(1) : 0;
+
+        // Phase productivity - which phases take most time
+        const phaseProductivity = Object.entries(timeByPhase)
+            .sort((a, b) => b[1].seconds - a[1].seconds)
+            .slice(0, 5); // Top 5 phases
+
+        return {
+            timeByProject,
+            focusRatio,
+            dailyIntensity: dailyTimeData,
+            totalTimeSeconds,
+            avgDailyHours,
+            phaseProductivity
+        };
+    };
     // Load tickets from backend
     const loadTickets = async () => {
         try {
@@ -217,7 +339,59 @@ const ResearchTodoApp = () => {
             console.error('Error loading active timer:', error);
         }
     };
+    // Load time analytics data
+    const loadTimeAnalytics = async () => {
+        try {
+            // Get daily time data for last 7 days
+            const dailyData = [];
+            for (let i = 6; i >= 0; i--) {
+                const date = new Date();
+                date.setDate(date.getDate() - i);
+                const dateStr = date.toISOString().split('T')[0];
 
+                const summary = await apiService.getTimeSummary(dateStr);
+                const totalSeconds = summary.reduce((sum, item) => sum + item.total_seconds, 0);
+
+                dailyData.push({
+                    date: dateStr,
+                    day: date.toLocaleDateString('en-US', { weekday: 'short' }),
+                    hours: totalSeconds / 3600,
+                    seconds: totalSeconds
+                });
+            }
+            setDailyTimeData(dailyData);
+
+            // Calculate time by phase
+            const phaseTime = {};
+            tickets.forEach(ticket => {
+                ticket.plan.phases.forEach(phase => {
+                    const phaseTasks = ticket.plan.tasks.filter(task => task.phase === phase.id);
+                    let phaseSeconds = 0;
+
+                    phaseTasks.forEach(task => {
+                        const timeKey = `${ticket.id}-${task.id}`;
+                        if (timeSpent[timeKey]) {
+                            phaseSeconds += timeSpent[timeKey];
+                        }
+                    });
+
+                    if (phaseSeconds > 0) {
+                        const key = `${ticket.title} - ${phase.name}`;
+                        phaseTime[key] = {
+                            seconds: phaseSeconds,
+                            ticketId: ticket.id,
+                            phaseId: phase.id,
+                            priority: ticket.priority
+                        };
+                    }
+                });
+            });
+            setTimeByPhase(phaseTime);
+
+        } catch (error) {
+            console.error('Error loading time analytics:', error);
+        }
+    };
     // Load time summary
     const loadTimeSummary = async () => {
         try {
@@ -2227,7 +2401,392 @@ Respond with a helpful message (not JSON this time).`
                                 </div>
                             ))}
                         </div>
+                        {/* Gantt Chart - Moved from Projects */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
+                                Project Timeline (Gantt Chart)
+                            </h3>
+                            {tickets.length > 0 ? (
+                                <div className="overflow-x-auto">
+                                    <div className="min-w-full">
+                                        {tickets.map(ticket => {
+                                            const startDate = new Date(ticket.created);
+                                            const endDate = new Date(ticket.deadline);
 
+                                            return (
+                                                <div key={ticket.id} className="flex items-center mb-6 group">
+                                                    <div className="w-64 flex-shrink-0 pr-6">
+                                                        <h4 className="font-bold text-gray-800 text-lg mb-2">{ticket.title}</h4>
+                                                        <div className="flex items-center space-x-2">
+                                                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${getPriorityColor(ticket.priority)} shadow-lg`}></div>
+                                                            <p className="text-sm text-gray-600">{ticket.progress}% complete</p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex-1 relative h-12 bg-gradient-to-r from-gray-200 to-gray-300 rounded-xl cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden">
+                                                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 rounded-xl shadow-lg transform hover:scale-105 transition-all duration-300">
+                                                            <LiquidProgressBar
+                                                                progress={ticket.progress}
+                                                                className="h-full rounded-xl"
+                                                                colors="from-purple-600 via-pink-600 to-purple-700"
+                                                            />
+                                                        </div>
+                                                        <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className="text-sm text-white font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">
+                                        {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}
+                                    </span>
+                                                        </div>
+                                                        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                                                            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-bounce shadow-lg"></div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-center py-12 text-gray-500">
+                                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                                    <p className="text-lg">No projects to display in timeline</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Deadline Risk Analysis */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30 mb-8">
+                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
+                                Deadline Risk Analysis
+                            </h3>
+
+                            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+                                {tickets.map(ticket => {
+                                    const risk = riskAnalysis[ticket.id] || calculateDeadlineRisk(ticket);
+                                    const riskColors = {
+                                        low: 'from-green-500 to-emerald-600',
+                                        medium: 'from-yellow-500 to-orange-600',
+                                        high: 'from-red-500 to-pink-600'
+                                    };
+
+                                    return (
+                                        <div
+                                            key={ticket.id}
+                                            className={`bg-gradient-to-br from-white/80 to-gray-50/80 backdrop-blur-sm rounded-2xl p-6 border-2 hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 cursor-pointer ${
+                                                selectedRiskProject === ticket.id ? 'ring-4 ring-purple-400' : 'border-white/50'
+                                            }`}
+                                            onClick={() => setSelectedRiskProject(selectedRiskProject === ticket.id ? null : ticket.id)}
+                                        >
+                                            <div className="flex items-start justify-between mb-4">
+                                                <div className="flex-1">
+                                                    <h4 className="font-bold text-gray-800 text-lg mb-1">{ticket.title}</h4>
+                                                    <p className="text-sm text-gray-600">Due: {ticket.deadline}</p>
+                                                </div>
+                                                <div className={`px-3 py-1 rounded-full text-xs font-bold text-white bg-gradient-to-r ${riskColors[risk.level]} shadow-lg`}>
+                                                    {risk.score}% Risk
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2 text-sm">
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Days Remaining:</span>
+                                                    <span className={`font-medium ${risk.daysRemaining < 7 ? 'text-red-600' : 'text-gray-800'}`}>
+                                {Math.round(risk.daysRemaining)}
+                            </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Progress Gap:</span>
+                                                    <span className={`font-medium ${risk.progressDiscrepancy > 20 ? 'text-orange-600' : 'text-gray-800'}`}>
+                                {risk.progressDiscrepancy > 0 ? `-${risk.progressDiscrepancy}%` : `+${Math.abs(risk.progressDiscrepancy)}%`}
+                            </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span className="text-gray-600">Open Tasks:</span>
+                                                    <span className="font-medium text-gray-800">{risk.incompleteTasks}</span>
+                                                </div>
+                                                {risk.phaseSlippage > 0 && (
+                                                    <div className="flex justify-between">
+                                                        <span className="text-gray-600">Overdue Phases:</span>
+                                                        <span className="font-medium text-red-600">{risk.phaseSlippage}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Mini progress bar */}
+                                            <div className="mt-4">
+                                                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                                    <div
+                                                        className={`h-full bg-gradient-to-r ${riskColors[risk.level]} transition-all duration-500`}
+                                                        style={{ width: `${ticket.progress}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            {/* What-If Analysis */}
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
+                                <h4 className="font-bold text-blue-800 text-lg mb-4">What-If Analysis</h4>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-sm text-blue-700 mb-2 block">
+                                            If I work <span className="font-bold text-lg">{whatIfHours}</span> extra hours per day:
+                                        </label>
+                                        <input
+                                            type="range"
+                                            min="0"
+                                            max="8"
+                                            step="0.5"
+                                            value={whatIfHours}
+                                            onChange={(e) => setWhatIfHours(parseFloat(e.target.value))}
+                                            className="w-full h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-xs text-blue-600 mt-1">
+                                            <span>0h</span>
+                                            <span>2h</span>
+                                            <span>4h</span>
+                                            <span>6h</span>
+                                            <span>8h</span>
+                                        </div>
+                                    </div>
+
+                                    {selectedRiskProject && (() => {
+                                        const ticket = tickets.find(t => t.id === selectedRiskProject);
+                                        const risk = riskAnalysis[selectedRiskProject];
+
+                                        // Calculate based on actual productivity data
+                                        const metrics = calculateProductivityMetrics();
+                                        const avgTasksPerHour = metrics.totalTimeSeconds > 0
+                                            ? (tickets.flatMap(t => t.plan.tasks.filter(task => task.completed)).length / (metrics.totalTimeSeconds / 3600))
+                                            : 0.5;
+
+                                        // Use actual completion rate or fallback
+                                        const actualTasksPerHour = avgTasksPerHour || 0.5;
+                                        const extraTasksCompleted = whatIfHours * risk.daysRemaining * actualTasksPerHour;
+                                        const newProgress = Math.min(100, ticket.progress + (extraTasksCompleted / ticket.plan.tasks.length * 100));
+
+                                        // More accurate risk reduction based on progress improvement
+                                        const progressImprovement = newProgress - ticket.progress;
+                                        const riskReduction = progressImprovement * 0.8; // 80% of progress improvement reduces risk
+                                        const improvedRisk = Math.max(0, risk.score - riskReduction);
+
+                                        return (
+                                            <div className="bg-white/70 rounded-xl p-4">
+                                                <p className="text-sm text-gray-700 mb-2">
+                                                    Impact on <span className="font-bold">{ticket.title}</span>:
+                                                </p>
+                                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                                    <div>
+                                                        <span className="text-gray-600">Current Risk:</span>
+                                                        <span className="font-bold text-red-600 ml-2">{risk.score}%</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-gray-600">New Risk:</span>
+                                                        <span className="font-bold text-green-600 ml-2">{Math.round(improvedRisk)}%</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-gray-600">Progress Gain:</span>
+                                                        <span className="font-bold text-blue-600 ml-2">+{Math.round(newProgress - ticket.progress)}%</span>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-gray-600">Tasks Completed:</span>
+                                                        <span className="font-bold text-purple-600 ml-2">~{Math.round(extraTasksCompleted)}</span>
+                                                    </div>
+                                                </div>
+                                                <p className="text-xs text-gray-500 mt-2">
+                                                    Based on your avg: {actualTasksPerHour.toFixed(1)} tasks/hour
+                                                </p>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Time Analytics */}
+                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
+                            <div className="flex items-center justify-between mb-6">
+                                <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                    Time Analytics
+                                </h3>
+                                <button
+                                    onClick={loadTimeAnalytics}
+                                    className="text-sm text-purple-600 hover:text-purple-700 flex items-center space-x-1"
+                                >
+                                    <TrendingUp className="w-4 h-4" />
+                                    <span>Refresh Data</span>
+                                </button>
+                            </div>
+
+                            {(() => {
+                                const metrics = calculateProductivityMetrics();
+
+                                return (
+                                    <div className="space-y-8">
+                                        {/* Focus Ratio */}
+                                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 border border-purple-200 rounded-2xl p-6">
+                                            <h4 className="font-bold text-purple-800 text-lg mb-4">Focus Ratio</h4>
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <div className="text-4xl font-bold text-purple-700">{metrics.focusRatio}%</div>
+                                                    <p className="text-sm text-purple-600 mt-1">Time on high-priority tasks</p>
+                                                </div>
+                                                <div className="w-32 h-32 relative">
+                                                    <svg className="w-32 h-32 transform -rotate-90" viewBox="0 0 36 36">
+                                                        <path
+                                                            d="m18,2.0845 a 15.9155,15.9155 0 0,1 0,31.831 a 15.9155,15.9155 0 0,1 0,-31.831"
+                                                            fill="none"
+                                                            stroke="rgba(229, 231, 235, 1)"
+                                                            strokeWidth="3"
+                                                        />
+                                                        <path
+                                                            d="m18,2.0845 a 15.9155,15.9155 0 0,1 0,31.831 a 15.9155,15.9155 0 0,1 0,-31.831"
+                                                            fill="none"
+                                                            stroke="url(#focus-gradient)"
+                                                            strokeWidth="3"
+                                                            strokeDasharray={`${metrics.focusRatio}, 100`}
+                                                            strokeLinecap="round"
+                                                        />
+                                                        <defs>
+                                                            <linearGradient id="focus-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                                                <stop offset="0%" stopColor="#a855f7" />
+                                                                <stop offset="100%" stopColor="#ec4899" />
+                                                            </linearGradient>
+                                                        </defs>
+                                                    </svg>
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        <Flame className="w-8 h-8 text-purple-600" />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Time by Project (Pie Chart Alternative) */}
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 text-lg mb-4">Time Distribution by Project</h4>
+                                            <div className="space-y-3">
+                                                {Object.entries(metrics.timeByProject).map(([projectName, data], index) => {
+                                                    const percentage = metrics.totalTimeSeconds > 0
+                                                        ? (data.seconds / metrics.totalTimeSeconds * 100).toFixed(1)
+                                                        : 0;
+                                                    const projectColor = getProjectColor(index);
+
+                                                    return (
+                                                        <div key={projectName} className="flex items-center space-x-4">
+                                                            <div className="flex-1">
+                                                                <div className="flex items-center justify-between mb-1">
+                                                                    <span className="text-sm font-medium text-gray-700">{projectName}</span>
+                                                                    <span className="text-sm text-gray-600">
+                                                {formatTime(data.seconds)} ({percentage}%)
+                                            </span>
+                                                                </div>
+                                                                <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
+                                                                    <div
+                                                                        className={`h-full bg-gradient-to-r ${projectColor.bg} transition-all duration-1000 ease-out`}
+                                                                        style={{ width: `${percentage}%` }}
+                                                                    >
+                                                                        <div className="h-full bg-gradient-to-r from-white/20 to-transparent" />
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+
+                                                {Object.keys(metrics.timeByProject).length === 0 && (
+                                                    <p className="text-gray-500 text-center py-4">No time tracked yet</p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Daily Intensity Chart */}
+                                        <div>
+                                            <h4 className="font-bold text-gray-800 text-lg mb-4">Daily Activity (Last 7 Days)</h4>
+                                            <div className="flex items-end justify-between h-40 space-x-2">
+                                                {metrics.dailyIntensity.map((day, index) => {
+                                                    const maxHours = Math.max(...metrics.dailyIntensity.map(d => d.hours), 0.5);
+                                                    const heightPercent = maxHours > 0 ? (day.hours / maxHours) * 100 : 0;
+                                                    const isToday = day.date === new Date().toISOString().split('T')[0];
+
+                                                    return (
+                                                        <div key={day.date} className="flex-1 flex flex-col items-center">
+                                                            <div className="relative w-full flex items-end justify-center h-32">
+                                                                <div
+                                                                    className={`w-full rounded-t-lg transition-all duration-1000 ease-out cursor-pointer ${
+                                                                        day.hours === 0
+                                                                            ? 'bg-gray-300'
+                                                                            : isToday
+                                                                                ? 'bg-gradient-to-t from-purple-500 to-pink-400 animate-pulse'
+                                                                                : 'bg-gradient-to-t from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500'
+                                                                    }`}
+                                                                    style={{ height: `${Math.max(heightPercent, 2)}%` }}
+                                                                    title={`${day.hours.toFixed(1)} hours`}
+                                                                >
+                                                                    {day.hours > 0 && (
+                                                                        <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-xs font-medium text-gray-600">
+                                                                            {day.hours.toFixed(1)}h
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            <span className={`text-xs mt-2 ${isToday ? 'text-purple-600 font-bold' : 'text-gray-600'}`}>
+                        {day.day}
+                    </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+
+                                            {/* Summary Stats */}
+                                            <div className="grid grid-cols-3 gap-4 mt-6">
+                                                <div className="text-center">
+                                                    <div className="text-2xl font-bold text-blue-600">{metrics.avgDailyHours}h</div>
+                                                    <div className="text-xs text-gray-600">Avg Daily</div>
+                                                </div>
+                                                <div className="text-center">
+                                                    <div className="text-2xl font-bold text-green-600">
+                                                        {formatTime(metrics.totalTimeSeconds)}
+                                                    </div>
+                                                    <div className="text-xs text-gray-600">Total (7 days)</div>
+                                                </div>
+                                                <div className="text-center">
+                                                    <div className="text-2xl font-bold text-purple-600">
+                                                        {metrics.dailyIntensity.filter(d => d.hours > 0).length}
+                                                    </div>
+                                                    <div className="text-xs text-gray-600">Active Days</div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Phase Productivity Analysis */}
+                                        {metrics.phaseProductivity.length > 0 && (
+                                            <div>
+                                                <h4 className="font-bold text-gray-800 text-lg mb-4">Most Time-Consuming Phases</h4>
+                                                <div className="space-y-2">
+                                                    {metrics.phaseProductivity.map(([phaseName, data]) => (
+                                                        <div key={phaseName} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl">
+                                                            <span className="text-sm font-medium text-gray-700">{phaseName}</span>
+                                                            <div className="flex items-center space-x-3">
+                                                                <span className="text-sm text-gray-600">{formatTime(data.seconds)}</span>
+                                                                <span className={`text-xs px-2 py-1 rounded-full ${
+                                                                    data.priority === 'High'
+                                                                        ? 'bg-red-100 text-red-700'
+                                                                        : data.priority === 'Medium'
+                                                                            ? 'bg-yellow-100 text-yellow-700'
+                                                                            : 'bg-green-100 text-green-700'
+                                                                }`}>
+                                                                    {data.priority}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+                        </div>
                         {/* Enhanced Quick Actions */}
                         <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
                             <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
@@ -2288,113 +2847,6 @@ Respond with a helpful message (not JSON this time).`
                             </div>
                         </div>
 
-                        {/* AI Insights */}
-                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
-                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">AI Insights</h3>
-
-                            <div className="space-y-6">
-                                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
-                                    <div className="flex items-start space-x-4">
-                                        <div className="bg-gradient-to-r from-blue-500 to-indigo-600 p-3 rounded-xl shadow-lg">
-                                            <TrendingUp className="w-6 h-6 text-white" />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-gray-800 text-lg mb-2">Project Timeline Analysis</h4>
-                                            <p className="text-gray-600">
-                                                {tickets.length > 0 && tickets[0].progress > 0
-                                                    ? `Your ${tickets[0].title} is ${tickets[0].progress}% complete. You're making excellent progress!`
-                                                    : "Start completing tasks to see progress insights here."
-                                                }
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border border-yellow-200 rounded-2xl p-6">
-                                    <div className="flex items-start space-x-4">
-                                        <div className="bg-gradient-to-r from-yellow-500 to-orange-600 p-3 rounded-xl shadow-lg">
-                                            <AlertTriangle className="w-6 h-6 text-white" />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-gray-800 text-lg mb-2">Attention Needed</h4>
-                                            <p className="text-gray-600">
-                                                {tickets.filter(t => t.priority === 'High' && t.progress < 50).length > 0
-                                                    ? `You have ${tickets.filter(t => t.priority === 'High' && t.progress < 50).length} high-priority projects that need attention.`
-                                                    : "All your high-priority projects are on track! 🎯"
-                                                }
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl p-6">
-                                    <div className="flex items-start space-x-4">
-                                        <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-3 rounded-xl shadow-lg">
-                                            <CheckCircle className="w-6 h-6 text-white" />
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-gray-800 text-lg mb-2">Research Momentum</h4>
-                                            <p className="text-gray-600">
-                                                {tickets.length > 0
-                                                    ? `You have ${tickets.length} active research projects. Excellent momentum on maintaining multiple research streams! 🚀`
-                                                    : "Create your first research project to start tracking momentum."
-                                                }
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        {/* Gantt Chart - Moved from Projects */}
-                        <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-8 shadow-xl border border-white/30">
-                            <h3 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-8">
-                                Project Timeline (Gantt Chart)
-                            </h3>
-                            {tickets.length > 0 ? (
-                                <div className="overflow-x-auto">
-                                    <div className="min-w-full">
-                                        {tickets.map(ticket => {
-                                            const startDate = new Date(ticket.created);
-                                            const endDate = new Date(ticket.deadline);
-
-                                            return (
-                                                <div key={ticket.id} className="flex items-center mb-6 group">
-                                                    <div className="w-64 flex-shrink-0 pr-6">
-                                                        <h4 className="font-bold text-gray-800 text-lg mb-2">{ticket.title}</h4>
-                                                        <div className="flex items-center space-x-2">
-                                                            <div className={`w-6 h-6 rounded-full bg-gradient-to-r ${getPriorityColor(ticket.priority)} shadow-lg`}></div>
-                                                            <p className="text-sm text-gray-600">{ticket.progress}% complete</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex-1 relative h-12 bg-gradient-to-r from-gray-200 to-gray-300 rounded-xl cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden">
-                                                        <div className="absolute inset-0 bg-gradient-to-r from-purple-500 via-pink-500 to-purple-600 rounded-xl shadow-lg transform hover:scale-105 transition-all duration-300">
-                                                            <LiquidProgressBar
-                                                                progress={ticket.progress}
-                                                                className="h-full rounded-xl"
-                                                                colors="from-purple-600 via-pink-600 to-purple-700"
-                                                            />
-                                                        </div>
-                                                        <div className="absolute inset-0 flex items-center justify-center">
-                                    <span className="text-sm text-white font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-sm">
-                                        {startDate.toLocaleDateString()} - {endDate.toLocaleDateString()}
-                                    </span>
-                                                        </div>
-                                                        <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
-                                                            <div className="w-3 h-3 bg-yellow-400 rounded-full animate-bounce shadow-lg"></div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="text-center py-12 text-gray-500">
-                                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-                                    <p className="text-lg">No projects to display in timeline</p>
-                                </div>
-                            )}
-                        </div>
                     </div>
                 )}
             </main>

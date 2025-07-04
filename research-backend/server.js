@@ -385,7 +385,201 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+// =============================================================================
+// NOTES ROUTES
+// =============================================================================
 
+app.get('/api/notes', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT n.*, 
+             t.title as task_title,
+             p.name as phase_name,
+             tk.title as ticket_title
+      FROM notes n
+      LEFT JOIN tasks t ON n.task_id = t.id
+      LEFT JOIN phases p ON n.phase_id = p.id
+      LEFT JOIN tickets tk ON n.ticket_id = tk.id
+      WHERE n.user_id = $1
+      ORDER BY n.updated_at DESC
+    `, [req.user.userId]);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching notes:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/notes/:type/:id', authenticateToken, async (req, res) => {
+  try {
+    const { type, id } = req.params;
+
+    let query;
+    if (type === 'task') {
+      query = `
+        SELECT n.* 
+        FROM notes n
+        JOIN tasks t ON n.task_id = t.id
+        JOIN tickets tk ON t.ticket_id = tk.id
+        WHERE n.task_id = $1 AND tk.user_id = $2
+      `;
+    } else if (type === 'phase') {
+      query = `
+        SELECT n.* 
+        FROM notes n
+        JOIN phases p ON n.phase_id = p.id
+        JOIN tickets tk ON p.ticket_id = tk.id
+        WHERE n.phase_id = $1 AND tk.user_id = $2
+      `;
+    } else {
+      return res.status(400).json({ error: 'Invalid type' });
+    }
+
+    const result = await pool.query(query, [id, req.user.userId]);
+    res.json(result.rows[0] || null);
+  } catch (error) {
+    console.error('Error fetching note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/notes', authenticateToken, async (req, res) => {
+  try {
+    const { content, ticketId, taskId, phaseId } = req.body;
+
+    if (!content || !ticketId || (!taskId && !phaseId)) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Check if note already exists
+    let existingNote;
+    if (taskId) {
+      existingNote = await pool.query(
+          'SELECT id FROM notes WHERE user_id = $1 AND task_id = $2',
+          [req.user.userId, taskId]
+      );
+    } else {
+      existingNote = await pool.query(
+          'SELECT id FROM notes WHERE user_id = $1 AND phase_id = $2',
+          [req.user.userId, phaseId]
+      );
+    }
+
+    let result;
+    if (existingNote.rows.length > 0) {
+      // Update existing note
+      result = await pool.query(`
+        UPDATE notes 
+        SET content = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2 AND user_id = $3
+        RETURNING *
+      `, [content, existingNote.rows[0].id, req.user.userId]);
+    } else {
+      // Create new note
+      result = await pool.query(`
+        INSERT INTO notes (user_id, ticket_id, task_id, phase_id, content)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `, [req.user.userId, ticketId, taskId || null, phaseId || null, content]);
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating/updating note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/notes/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content } = req.body;
+
+    const result = await pool.query(`
+      UPDATE notes 
+      SET content = $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2 AND user_id = $3
+      RETURNING *
+    `, [content, id, req.user.userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await pool.query(
+        'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING id',
+        [id, req.user.userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Note not found' });
+    }
+
+    res.json({ message: 'Note deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting note:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/notes/export', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT n.content,
+             t.title as task_title,
+             p.name as phase_name,
+             tk.title as ticket_title,
+             n.created_at,
+             n.updated_at
+      FROM notes n
+      LEFT JOIN tasks t ON n.task_id = t.id
+      LEFT JOIN phases p ON n.phase_id = p.id
+      LEFT JOIN tickets tk ON n.ticket_id = tk.id
+      WHERE n.user_id = $1
+      ORDER BY tk.title, p.phase_order, t.created_at
+    `, [req.user.userId]);
+
+    // Create markdown export
+    let markdown = '# Research Notes Export\n\n';
+    markdown += `Export Date: ${new Date().toISOString()}\n\n`;
+
+    let currentTicket = '';
+    for (const note of result.rows) {
+      if (note.ticket_title !== currentTicket) {
+        currentTicket = note.ticket_title;
+        markdown += `\n## Project: ${currentTicket}\n\n`;
+      }
+
+      if (note.phase_name) {
+        markdown += `### Phase: ${note.phase_name}\n`;
+      } else if (note.task_title) {
+        markdown += `### Task: ${note.task_title}\n`;
+      }
+
+      markdown += `${note.content}\n\n`;
+      markdown += `*Updated: ${new Date(note.updated_at).toLocaleString()}*\n\n---\n\n`;
+    }
+
+    res.setHeader('Content-Type', 'text/markdown');
+    res.setHeader('Content-Disposition', `attachment; filename=research-notes-${new Date().toISOString().split('T')[0]}.md`);
+    res.send(markdown);
+  } catch (error) {
+    console.error('Error exporting notes:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // =============================================================================
 // AUTH ROUTES
 // =============================================================================
@@ -826,225 +1020,7 @@ app.get('/api/time-tracking/summary', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-// =============================================================================
-// NOTES ROUTES - ADD THESE NEW ROUTES
-// =============================================================================
 
-// Get all notes for a user
-app.get('/api/notes', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT n.*, 
-             t.title as task_title,
-             p.name as phase_name,
-             tk.title as ticket_title
-      FROM notes n
-      LEFT JOIN tasks t ON n.task_id = t.id
-      LEFT JOIN phases p ON n.phase_id = p.id
-      LEFT JOIN tickets tk ON n.ticket_id = tk.id
-      WHERE n.user_id = $1
-      ORDER BY n.updated_at DESC
-    `, [req.user.userId]);
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error('Error fetching notes:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Get notes for a specific task or phase
-app.get('/api/notes/:type/:id', authenticateToken, async (req, res) => {
-  try {
-    const { type, id } = req.params;
-
-    let query, params;
-    if (type === 'task') {
-      query = `
-        SELECT n.* FROM notes n
-        JOIN tasks t ON n.task_id = t.id
-        JOIN tickets tk ON t.ticket_id = tk.id
-        WHERE n.task_id = $1 AND tk.user_id = $2
-      `;
-      params = [id, req.user.userId];
-    } else if (type === 'phase') {
-      query = `
-        SELECT n.* FROM notes n
-        JOIN phases p ON n.phase_id = p.id
-        JOIN tickets tk ON p.ticket_id = tk.id
-        WHERE n.phase_id = $1 AND tk.user_id = $2
-      `;
-      params = [id, req.user.userId];
-    } else {
-      return res.status(400).json({ error: 'Invalid note type' });
-    }
-
-    const result = await pool.query(query, params);
-    res.json(result.rows[0] || null);
-  } catch (error) {
-    console.error('Error fetching note:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Create or update a note
-app.post('/api/notes', authenticateToken, [
-  body('content').trim(),
-  body('taskId').optional().isInt(),
-  body('phaseId').optional().isInt(),
-  body('ticketId').isInt()
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { content, taskId, phaseId, ticketId } = req.body;
-
-    // Validate that either taskId or phaseId is provided, but not both
-    if ((!taskId && !phaseId) || (taskId && phaseId)) {
-      return res.status(400).json({ error: 'Must provide either taskId or phaseId, but not both' });
-    }
-
-    // Check if note already exists
-    let existingNote;
-    if (taskId) {
-      existingNote = await pool.query(`
-        SELECT n.id FROM notes n
-        JOIN tasks t ON n.task_id = t.id
-        JOIN tickets tk ON t.ticket_id = tk.id
-        WHERE n.task_id = $1 AND tk.user_id = $2
-      `, [taskId, req.user.userId]);
-    } else {
-      existingNote = await pool.query(`
-        SELECT n.id FROM notes n
-        JOIN phases p ON n.phase_id = p.id
-        JOIN tickets tk ON p.ticket_id = tk.id
-        WHERE n.phase_id = $1 AND tk.user_id = $2
-      `, [phaseId, req.user.userId]);
-    }
-
-    let result;
-    if (existingNote.rows.length > 0) {
-      // Update existing note
-      result = await pool.query(`
-        UPDATE notes 
-        SET content = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2
-        RETURNING *
-      `, [content, existingNote.rows[0].id]);
-    } else {
-      // Create new note
-      result = await pool.query(`
-        INSERT INTO notes (user_id, task_id, phase_id, ticket_id, content)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *
-      `, [req.user.userId, taskId || null, phaseId || null, ticketId, content]);
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error creating/updating note:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Update a note
-app.put('/api/notes/:id', authenticateToken, [
-  body('content').trim()
-], async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    const { id } = req.params;
-    const { content } = req.body;
-
-    const result = await pool.query(`
-      UPDATE notes 
-      SET content = $1, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $2 AND user_id = $3
-      RETURNING *
-    `, [content, id, req.user.userId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Note not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating note:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Delete a note
-app.delete('/api/notes/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const result = await pool.query(
-        'DELETE FROM notes WHERE id = $1 AND user_id = $2 RETURNING id',
-        [id, req.user.userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Note not found' });
-    }
-
-    res.json({ message: 'Note deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting note:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Export all notes as markdown
-app.get('/api/notes/export', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT n.*, 
-             t.title as task_title,
-             p.name as phase_name,
-             tk.title as ticket_title
-      FROM notes n
-      LEFT JOIN tasks t ON n.task_id = t.id
-      LEFT JOIN phases p ON n.phase_id = p.id
-      LEFT JOIN tickets tk ON n.ticket_id = tk.id
-      WHERE n.user_id = $1 AND n.content != ''
-      ORDER BY tk.title, p.phase_order, t.created_at
-    `, [req.user.userId]);
-
-    let markdown = `# Research Notes Export\n\n`;
-    markdown += `Generated on: ${new Date().toLocaleDateString()}\n\n`;
-
-    let currentTicket = '';
-    for (const note of result.rows) {
-      if (note.ticket_title !== currentTicket) {
-        currentTicket = note.ticket_title;
-        markdown += `## ${currentTicket}\n\n`;
-      }
-
-      const itemType = note.task_title ? 'Task' : 'Phase';
-      const itemTitle = note.task_title || note.phase_name;
-
-      markdown += `### ${itemType}: ${itemTitle}\n\n`;
-      markdown += `${note.content}\n\n`;
-      markdown += `*Last updated: ${new Date(note.updated_at).toLocaleDateString()}*\n\n`;
-      markdown += `---\n\n`;
-    }
-
-    res.setHeader('Content-Type', 'text/markdown');
-    res.setHeader('Content-Disposition', 'attachment; filename="research-notes.md"');
-    res.send(markdown);
-  } catch (error) {
-    console.error('Error exporting notes:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
 // =============================================================================
 // AI INTEGRATION ROUTE (GEMINI)
 // =============================================================================
@@ -1207,7 +1183,7 @@ app.use((req, res) => {
     url: req.url,
     method: req.method,
     host: req.headers.host,
-    availableEndpoints: ['/api/health', '/api/auth/*', '/api/tickets','/api/setup-database']
+    availableEndpoints: ['/api/health', '/api/auth/*', '/api/tickets', '/api/notes', '/api/setup-database']
   });
 });
 
