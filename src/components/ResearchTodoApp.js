@@ -69,12 +69,12 @@ const parseMarkdownContent = (text) => {
     });
 
     // Parse bullet points with bold text
-    text = text.replace(/^[•\-]\s+\*\*(.*?)\*\*:\s*(.*)$/gm, (match, bold, rest) => {
+    text = text.replace(/^[•-]\s+\*\*(.*?)\*\*:\s*(.*)$/gm, (match, bold, rest) => {
         return `<div class="bullet-item"><span class="bullet-bold">${bold}:</span> ${rest}</div>`;
     });
 
     // Parse regular bullet points
-    text = text.replace(/^[•\-]\s+(.*)$/gm, '<div class="bullet-item">$1</div>');
+    text = text.replace(/^[•-]\s+(.*)$/gm, '<div class="bullet-item">$1</div>');
 
     // Parse sub-items (indented with -)
     text = text.replace(/^\s+[-]\s+(.*)$/gm, '<div class="sub-item">$1</div>');
