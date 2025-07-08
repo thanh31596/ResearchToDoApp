@@ -202,7 +202,13 @@ class ApiService {
         });
     }
 
-
+    // Task guidance method
+    async getTaskGuidance(taskData) {
+        return this.apiCall('/ai/task-guidance', {
+            method: 'POST',
+            body: JSON.stringify(taskData),
+        });
+    }
 
     // Export method
     async exportData() {

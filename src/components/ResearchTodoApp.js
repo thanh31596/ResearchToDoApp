@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame,  LogOut, User, BookOpen } from 'lucide-react';
+import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame,  LogOut, User, BookOpen,ChevronDown } from 'lucide-react';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { NoteIcon, NoteEditor, NotesSidebar } from './Notes/NoteComponents';
@@ -56,6 +56,63 @@ const Confetti = ({ active, onComplete }) => {
     );
 };
 
+// Enhanced markdown parser
+const parseMarkdownContent = (text) => {
+    if (!text) return '';
+
+    // Parse bold text
+    text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+    // Parse numbered lists with bold titles
+    text = text.replace(/^(\d+)\.\s+\*\*(.*?)\*\*\s*(.*)$/gm, (match, num, title, desc) => {
+        return `<div class="numbered-item" data-number="${num}"><div class="item-title">${title}</div><div class="item-desc">${desc}</div></div>`;
+    });
+
+    // Parse bullet points with bold text
+    text = text.replace(/^[•\-]\s+\*\*(.*?)\*\*:\s*(.*)$/gm, (match, bold, rest) => {
+        return `<div class="bullet-item"><span class="bullet-bold">${bold}:</span> ${rest}</div>`;
+    });
+
+    // Parse regular bullet points
+    text = text.replace(/^[•\-]\s+(.*)$/gm, '<div class="bullet-item">$1</div>');
+
+    // Parse sub-items (indented with -)
+    text = text.replace(/^\s+[-]\s+(.*)$/gm, '<div class="sub-item">$1</div>');
+
+    // Convert line breaks
+    text = text.replace(/\n/g, '<br>');
+
+    return text;
+};
+
+// Parse guidance sections with proper markdown rendering
+const parseGuidanceContent = (text) => {
+    if (!text) return [];
+
+    const sections = text.split(/##\s+/g).filter(Boolean);
+
+    return sections.map(section => {
+        const lines = section.trim().split('\n');
+        const titleLine = lines[0];
+        const contentLines = lines.slice(1).join('\n').trim();
+
+        // Extract emoji and title
+        const emojiMatch = titleLine.match(/^([\u{1F300}-\u{1F9FF}])/u);
+        const emoji = emojiMatch ? emojiMatch[1] : '📌';
+        const title = titleLine.replace(/^[\u{1F300}-\u{1F9FF}]\s*/u, '').trim();
+
+        // Parse the markdown content
+        const parsedContent = parseMarkdownContent(contentLines);
+
+        return {
+            emoji,
+            title,
+            content: parsedContent,
+            rawContent: contentLines,
+            isExpanded: true
+        };
+    });
+};
 // DNA Loader Component
 const DNALoader = () => (
     <div className="flex items-center justify-center">
@@ -128,6 +185,12 @@ const ResearchTodoApp = () => {
     const [riskAnalysis, setRiskAnalysis] = useState({});
     const [whatIfHours, setWhatIfHours] = useState(2); // Extra hours per day
     const [selectedRiskProject, setSelectedRiskProject] = useState(null);
+
+    const [showGuidanceModal, setShowGuidanceModal] = useState(false);
+    const [taskGuidance, setTaskGuidance] = useState(null);
+    const [loadingGuidance, setLoadingGuidance] = useState(false);
+    const [guidanceTaskInfo, setGuidanceTaskInfo] = useState(null);
+    const [guidanceSections, setGuidanceSections] = useState([]);
     // Load data from backend on component mount
     useEffect(() => {
         loadTickets();
@@ -469,7 +532,36 @@ const ResearchTodoApp = () => {
         }
         return false;
     };
+// Get AI guidance for a task
+    const getTaskGuidance = async (task, ticket, phase) => {
+        setLoadingGuidance(true);
+        setShowGuidanceModal(true);
+        setGuidanceTaskInfo({ task, ticket, phase });
 
+        try {
+            const response = await apiService.getTaskGuidance({
+                taskTitle: task.title,
+                taskId: task.id,
+                projectTitle: ticket.title,
+                projectDescription: ticket.description,
+                phaseInfo: {
+                    phaseName: phase.name,
+                    phaseId: phase.id
+                }
+            });
+
+            setTaskGuidance(response.guidance);
+            const sections = parseGuidanceContent(response.guidance);
+            setGuidanceSections(sections);
+        } catch (error) {
+            console.error('Error getting task guidance:', error);
+            setTaskGuidance('Failed to generate guidance. Please try again.');
+            setGuidanceSections([]);
+            addNotification('Failed to get task guidance', 'error');
+        } finally {
+            setLoadingGuidance(false);
+        }
+    };
     // Add notification helper
     const addNotification = (message, type = 'info') => {
         const id = Date.now();
@@ -1327,47 +1419,44 @@ Respond with a helpful message (not JSON this time).`
                                     </button>
                                 </div>
                             )}
-
-
                             <button
                                 onClick={openNotesSidebar}
-                                className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-blue-600 hover:to-indigo-700"
+                                className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 md:px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-blue-600 hover:to-indigo-700"
                                 title="View all notes"
                             >
                                 <BookOpen className="w-5 h-5" />
-                                <span>Notes</span>
+                                <span className="hidden md:inline">Notes</span>
                                 {notes.length > 0 && (
                                     <span className="bg-white/20 text-xs px-2 py-1 rounded-full">
-                                        {notes.length}
-                                    </span>
+                                  {notes.length}
+                                </span>
                                 )}
                             </button>
                             <button
                                 onClick={() => setShowCreateTask(true)}
-                                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-purple-600 hover:to-pink-600"
+                                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 md:px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-purple-600 hover:to-pink-600"
                             >
                                 <Plus className="w-5 h-5" />
-                                <span>Create Task</span>
+                                <span className="hidden md:inline">Create Task</span>
                             </button>
 
-                            <nav className="flex space-x-1 bg-white/70 backdrop-blur-sm rounded-2xl p-1 shadow-lg border border-white/30">
+                            <nav className="flex space-x-1 bg-white/70 backdrop-blur-sm rounded-2xl p-1 shadow-lg border border-white/30 overflow-x-auto md:overflow-visible">
                                 {[
                                     { key: 'daily', label: 'Daily', icon: Clock },
                                     { key: 'calendar', label: 'Calendar', icon: Calendar },
-                                    // { key: 'projects', label: 'Projects', icon: Target },
                                     { key: 'analytics', label: 'Analytics', icon: TrendingUp }
                                 ].map(({ key, label, icon: Icon }) => (
                                     <button
                                         key={key}
                                         onClick={() => setCurrentView(key)}
-                                        className={`flex items-center space-x-2 px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 ${
+                                        className={`flex items-center space-x-2 px-3 md:px-4 py-2 rounded-xl transition-all duration-300 transform hover:scale-105 whitespace-nowrap ${
                                             currentView === key
                                                 ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg'
                                                 : 'text-gray-600 hover:text-purple-600 hover:bg-white/50'
                                         }`}
                                     >
                                         <Icon className="w-4 h-4" />
-                                        <span className="font-medium">{label}</span>
+                                        <span className="font-medium hidden md:inline">{label}</span>
                                     </button>
                                 ))}
                             </nav>
@@ -1514,9 +1603,9 @@ Respond with a helpful message (not JSON this time).`
             {/* Main Content */}
             <main className="max-w-7xl mx-auto px-6 py-8 relative z-10">
                 {currentView === 'daily' && (
-                    <div className="grid grid-cols-10 gap-6 h-[calc(100vh-200px)]">
+                    <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 h-auto lg:h-[calc(100vh-200px)]">
                         {/* Left Column - Projects Overview */}
-                        <div className="col-span-7 overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="col-span-1 lg:col-span-7 overflow-y-auto lg:pr-2 custom-scrollbar max-h-[60vh] lg:max-h-none">
                             <div className="mb-6">
                                 <div className="flex items-center justify-between mb-4">
                                     <h2 className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
@@ -1807,8 +1896,8 @@ Respond with a helpful message (not JSON this time).`
                                                                                     onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}`)}
                                                                                     title={`${task.title} - Due: ${task.deadline} • Double-click to edit`}
                                                                                 >
-    {task.title}
-</span>
+            {task.title}
+        </span>
                                                                             )}
                                                                             {editingTask === `${ticket.id}-${task.id}-deadline` ? (
                                                                                 <input
@@ -1827,10 +1916,23 @@ Respond with a helpful message (not JSON this time).`
                                                                                     onDoubleClick={() => setEditingTask(`${ticket.id}-${task.id}-deadline`)}
                                                                                     title="Double-click to edit deadline"
                                                                                 >
-                                                                                    {task.deadline}
-                                                                                </span>
+            {task.deadline}
+        </span>
                                                                             )}
                                                                             <div className="opacity-0 group-hover:opacity-100 flex items-center space-x-1">
+                                                                                <button
+                                                                                    onClick={() => {
+                                                                                        const phase = ticket.plan.phases.find(p => p.id === task.phase);
+                                                                                        getTaskGuidance(task, ticket, phase);
+                                                                                    }}
+                                                                                    className="text-purple-600 hover:text-purple-700 bg-purple-100 hover:bg-purple-200 px-2 py-1 rounded text-xs font-medium transition-all duration-200"
+                                                                                    title="Get AI guidance for this task"
+                                                                                >
+                                                                                <span className="flex items-center space-x-1">
+                                                                                    <Brain className="w-3 h-3" />
+                                                                                    <span>Guide Me</span>
+                                                                                </span>
+                                                                                </button>
                                                                                 <button
                                                                                     onClick={() => removeTask(ticket.id, task.id)}
                                                                                     className="text-red-400 hover:text-red-600"
@@ -1925,7 +2027,7 @@ Respond with a helpful message (not JSON this time).`
                         </div>
 
                         {/* Right Column - Today's Focus */}
-                        <div className="col-span-3 space-y-6 overflow-y-auto custom-scrollbar">
+                        <div className="col-span-1 lg:col-span-3 space-y-6 overflow-y-auto custom-scrollbar mt-6 lg:mt-0">
                             {/* Today's Focus Header */}
                             <div className="bg-white/70 backdrop-blur-lg rounded-3xl p-6 shadow-xl border border-white/30">
                                 <div className="flex items-center justify-between mb-6">
@@ -2106,7 +2208,7 @@ Respond with a helpful message (not JSON this time).`
                                 ))}
                             </div>
 
-                            <div className="grid grid-cols-7 gap-2">
+                            <div className="grid grid-cols-7 gap-1 md:gap-2 calendar-grid">
                                 {getDaysInMonth(currentDate).map((date, index) => {
                                     const tasksForDate = date ? getTasksForDate(date) : [];
                                     const isToday = date && date.toDateString() === new Date().toDateString();
@@ -2351,7 +2453,7 @@ Respond with a helpful message (not JSON this time).`
                 {currentView === 'analytics' && (
                     <div className="space-y-8">
                         {/* Enhanced Stats Grid */}
-                        <div className="grid md:grid-cols-4 gap-6">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
                             {[
                                 {
                                     title: 'Active Projects',
@@ -3191,7 +3293,7 @@ Respond with a helpful message (not JSON this time).`
             {/* Enhanced Chat Widget */}
             <div className="fixed bottom-6 right-6 z-50">
                 {showChat && (
-                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl shadow-2xl border border-white/50 w-96 h-96 mb-4 flex flex-col animate-slide-up">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl shadow-2xl border border-white/50 w-96 h-96 mb-4 flex flex-col animate-slide-up chat-widget">
                         <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-6 rounded-t-3xl">
                             <h3 className="font-bold text-lg">AI Research Assistant</h3>
                             <p className="text-sm opacity-90">Get insights about your research progress</p>
@@ -3286,7 +3388,147 @@ Respond with a helpful message (not JSON this time).`
                     </div>
                 </div>
             )}
+            {/* Task Guidance Modal */}
+            {/* Task Guidance Modal */}
+            {showGuidanceModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white/90 backdrop-blur-lg rounded-3xl p-6 md:p-8 w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-white/30 flex flex-col">
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex-1">
+                                <div className="flex items-center space-x-3 mb-3">
+                                    <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-3 rounded-2xl shadow-lg">
+                                        <Brain className="w-6 h-6 text-white" />
+                                    </div>
+                                    <h2 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
+                                        Task Guidance
+                                    </h2>
+                                </div>
+                                {guidanceTaskInfo && (
+                                    <div className="flex flex-wrap gap-3 text-sm">
+                            <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-medium">
+                                {guidanceTaskInfo.ticket.title}
+                            </span>
+                                        <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full">
+                                {guidanceTaskInfo.phase.name}
+                            </span>
+                                        <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full">
+                                {guidanceTaskInfo.task.title}
+                            </span>
+                                    </div>
+                                )}
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setShowGuidanceModal(false);
+                                    setTaskGuidance(null);
+                                    setGuidanceTaskInfo(null);
+                                    setGuidanceSections([]);
+                                }}
+                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all p-2"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
 
+                        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                            {loadingGuidance ? (
+                                <div className="flex flex-col items-center justify-center py-12">
+                                    <DNALoader />
+                                    <p className="text-gray-600 mt-4 animate-pulse">Generating personalized guidance...</p>
+                                </div>
+                            ) : guidanceSections.length > 0 ? (
+                                <div className="space-y-4">
+                                    {guidanceSections.map((section, index) => (
+                                        <div
+                                            key={index}
+                                            className={`bg-gradient-to-r ${
+                                                index === 0 ? 'from-purple-50 to-pink-50 border-purple-200' :
+                                                    index === 1 ? 'from-green-50 to-emerald-50 border-green-200' :
+                                                        index === 2 ? 'from-blue-50 to-indigo-50 border-blue-200' :
+                                                            index === 3 ? 'from-yellow-50 to-orange-50 border-yellow-200' :
+                                                                index === 4 ? 'from-cyan-50 to-teal-50 border-cyan-200' :
+                                                                    index === 5 ? 'from-red-50 to-pink-50 border-red-200' :
+                                                                        'from-gray-50 to-slate-50 border-gray-200'
+                                            } border rounded-2xl overflow-hidden transition-all duration-300`}
+                                        >
+                                            <button
+                                                onClick={() => {
+                                                    setGuidanceSections(prev => prev.map((s, i) =>
+                                                        i === index ? { ...s, isExpanded: !s.isExpanded } : s
+                                                    ));
+                                                }}
+                                                className="w-full p-4 flex items-center justify-between hover:bg-white/30 transition-colors"
+                                            >
+                                                <div className="flex items-center space-x-3">
+                                                    <span className="text-2xl">{section.emoji}</span>
+                                                    <h3 className="font-bold text-gray-800 text-lg">{section.title}</h3>
+                                                </div>
+                                                <div className={`transform transition-transform duration-200 ${section.isExpanded ? 'rotate-180' : ''}`}>
+                                                    <ChevronDown className="w-5 h-5 text-gray-500" />
+                                                </div>
+                                            </button>
+
+                                            {section.isExpanded && (
+                                                <div className="px-4 pb-4">
+                                                    <div className="bg-white/50 rounded-xl p-4">
+                                                        <div
+                                                            className="guidance-section-content"
+                                                            dangerouslySetInnerHTML={{ __html: section.content }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : null}
+                        </div>
+
+                        <div className="flex justify-between items-center pt-6 border-t border-gray-200 mt-6">
+                            <button
+                                onClick={() => {
+                                    const allExpanded = guidanceSections.every(s => s.isExpanded);
+                                    setGuidanceSections(prev => prev.map(s => ({ ...s, isExpanded: !allExpanded })));
+                                }}
+                                className="text-sm text-purple-600 hover:text-purple-700 font-medium"
+                            >
+                                {guidanceSections.every(s => s.isExpanded) ? 'Collapse All' : 'Expand All'}
+                            </button>
+
+                            <div className="flex space-x-3">
+                                <button
+                                    onClick={() => {
+                                        // Copy plain text version
+                                        const plainText = guidanceSections.map(section =>
+                                            `## ${section.emoji} ${section.title}\n${section.rawContent}`
+                                        ).join('\n\n');
+                                        navigator.clipboard.writeText(plainText);
+                                        addNotification('Guidance copied to clipboard!', 'success');
+                                    }}
+                                    disabled={!taskGuidance || loadingGuidance}
+                                    className="px-4 py-2 border border-gray-300 text-gray-700 rounded-xl font-medium hover:bg-gray-50 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                    <span>Copy</span>
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowGuidanceModal(false);
+                                        setTaskGuidance(null);
+                                        setGuidanceTaskInfo(null);
+                                        setGuidanceSections([]);
+                                    }}
+                                    className="px-6 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* Notes Sidebar */}
             <NotesSidebar
                 isOpen={showNotesSidebar}
@@ -3366,6 +3608,195 @@ Respond with a helpful message (not JSON this time).`
                     -webkit-line-clamp: 1;
                     -webkit-box-orient: vertical;
                 }
+                  /* Mobile Responsive Styles */
+              @media (max-width: 768px) {
+                /* Stack grid columns on mobile */
+                .md\\:grid-cols-2 {
+                  grid-template-columns: 1fr !important;
+                }
+                
+                .md\\:grid-cols-3 {
+                  grid-template-columns: 1fr !important;
+                }
+                
+                .md\\:grid-cols-4 {
+                  grid-template-columns: 1fr !important;
+                }
+                
+                /* Hide text on mobile, show only icons */
+                .mobile-hide {
+                  display: none !important;
+                }
+                
+                /* Adjust modal widths */
+                .max-w-2xl {
+                  max-width: calc(100vw - 2rem) !important;
+                }
+                
+                .max-w-4xl {
+                  max-width: calc(100vw - 2rem) !important;
+                }
+                
+                /* Adjust chat widget */
+                .chat-widget {
+                  width: calc(100vw - 2rem) !important;
+                  right: 1rem !important;
+                  bottom: 5rem !important;
+                }
+                
+                /* Make calendar scrollable */
+                .calendar-grid {
+                  overflow-x: auto;
+                  -webkit-overflow-scrolling: touch;
+                }
+                
+                /* Adjust font sizes */
+                .text-3xl {
+                  font-size: 1.5rem !important;
+                }
+                
+                .text-2xl {
+                  font-size: 1.25rem !important;
+                }
+                
+                .text-4xl {
+                  font-size: 1.875rem !important;
+                }
+                /* Guidance content formatting */
+                .guidance-content {
+                    line-height: 1.8;
+                }
+                
+                .guidance-content h1,
+                .guidance-content h2,
+                .guidance-content h3,
+                .guidance-content h4 {
+                    font-weight: bold;
+                    margin-top: 1.5rem;
+                    margin-bottom: 0.5rem;
+                }
+                
+                .guidance-content ul,
+                .guidance-content ol {
+                    margin-left: 1.5rem;
+                    margin-top: 0.5rem;
+                    margin-bottom: 0.5rem;
+                }
+                
+                .guidance-content li {
+                    margin-bottom: 0.25rem;
+                }
+                
+                .guidance-content strong {
+                    font-weight: bold;
+                    color: #4c1d95;
+                }
+                /* Guidance content formatting */
+                .guidance-section-content {
+                    line-height: 1.8;
+                    color: #374151;
+                }
+                
+                .guidance-section-content strong {
+                    font-weight: 600;
+                    color: #1f2937;
+                }
+                
+                /* Numbered items */
+                .numbered-item {
+                    display: flex;
+                    margin-bottom: 1rem;
+                    align-items: flex-start;
+                }
+                
+                .numbered-item::before {
+                    content: attr(data-number);
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 24px;
+                    height: 24px;
+                    background: linear-gradient(135deg, #a855f7 0%, #ec4899 100%);
+                    color: white;
+                    border-radius: 50%;
+                    font-size: 14px;
+                    font-weight: bold;
+                    margin-right: 12px;
+                    flex-shrink: 0;
+                }
+                
+                .numbered-item .item-title {
+                    font-weight: 600;
+                    color: #1f2937;
+                    margin-bottom: 4px;
+                }
+                
+                .numbered-item .item-desc {
+                    color: #6b7280;
+                    font-size: 14px;
+                    margin-left: 36px;
+                }
+                
+                /* Bullet items */
+                .bullet-item {
+                    position: relative;
+                    padding-left: 20px;
+                    margin-bottom: 8px;
+                    font-size: 14px;
+                    color: #4b5563;
+                }
+                
+                .bullet-item::before {
+                    content: "•";
+                    position: absolute;
+                    left: 0;
+                    color: #a855f7;
+                    font-weight: bold;
+                }
+                
+                .bullet-item .bullet-bold {
+                    font-weight: 600;
+                    color: #1f2937;
+                }
+                
+                /* Sub-items */
+                .sub-item {
+                    margin-left: 24px;
+                    padding-left: 16px;
+                    position: relative;
+                    font-size: 13px;
+                    color: #6b7280;
+                    margin-bottom: 4px;
+                }
+                
+                .sub-item::before {
+                    content: "–";
+                    position: absolute;
+                    left: 0;
+                    color: #9ca3af;
+                }
+                
+                /* Fix line breaks */
+                .guidance-section-content br {
+                    display: block;
+                    margin: 4px 0;
+                }
+                
+                /* Responsive adjustments */
+                @media (max-width: 768px) {
+                    .numbered-item {
+                        flex-direction: column;
+                    }
+                    
+                    .numbered-item::before {
+                        margin-bottom: 8px;
+                    }
+                    
+                    .numbered-item .item-desc {
+                        margin-left: 0;
+                    }
+                }
+              }
             `}</style>
         </div>
     );

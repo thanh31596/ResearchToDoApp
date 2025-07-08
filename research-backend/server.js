@@ -929,7 +929,60 @@ app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+// =============================================================================
+// TASK GUIDANCE ROUTE
+// =============================================================================
 
+app.post('/api/ai/task-guidance', authenticateToken, async (req, res) => {
+  try {
+    const { taskTitle, taskId, projectTitle, projectDescription, phaseInfo } = req.body;
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'AI service not configured' });
+    }
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `You are an AI research assistant providing detailed, actionable guidance for research tasks.
+
+Project: ${projectTitle}
+Project Description: ${projectDescription}
+Current Phase: ${phaseInfo.phaseName}
+Task: ${taskTitle}
+
+Please provide comprehensive, step-by-step guidance on how to complete this specific task. Include:
+
+1. **Overview**: Brief explanation of what this task entails and why it's important
+2. **Prerequisites**: What should be prepared or completed before starting
+3. **Step-by-Step Instructions**: Detailed, actionable steps to complete the task
+4. **Tools & Resources**: Specific tools, software, or resources that would be helpful
+5. **Best Practices**: Tips and recommendations for doing this task effectively
+6. **Common Pitfalls**: What to avoid or be careful about
+7. **Deliverables**: What should be produced or achieved by the end of this task
+8. **Quality Checklist**: How to know if the task is done well
+
+Be specific and practical. Assume the user is a researcher who needs clear, actionable guidance.`
+          }]
+        }]
+      })
+    });
+
+    const result = await response.json();
+    const guidance = result.candidates[0].content.parts[0].text;
+
+    res.json({ guidance });
+  } catch (error) {
+    console.error('Error generating task guidance:', error);
+    res.status(500).json({ error: 'Failed to generate guidance' });
+  }
+});
 // =============================================================================
 // TIME TRACKING ROUTES
 // =============================================================================

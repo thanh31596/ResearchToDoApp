@@ -283,7 +283,7 @@ export const NotesSidebar = ({ isOpen, onClose, notes, onNoteClick, onExport }) 
     return (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex">
             {/* Sidebar */}
-            <div className="w-96 bg-white/90 backdrop-blur-lg shadow-2xl border-r border-gray-200 flex flex-col">
+            <div className="w-full md:w-96 bg-white/90 backdrop-blur-lg shadow-2xl border-r border-gray-200 flex flex-col">
                 {/* Header */}
                 <div className="p-6 border-b border-gray-200">
                     <div className="flex items-center justify-between mb-4">
