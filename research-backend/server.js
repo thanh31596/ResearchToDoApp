@@ -291,6 +291,7 @@ const initDatabase = async () => {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
     // Notes table - ADD THIS NEW TABLE
     await pool.query(`
       CREATE TABLE IF NOT EXISTS notes (
@@ -309,6 +310,49 @@ const initDatabase = async () => {
       )
     `);
 
+    // Journal entries table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS journal_entries (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        entry_date DATE DEFAULT CURRENT_DATE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Todo lists table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS todo_lists (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        estimated_time INTEGER DEFAULT 0,
+        priority VARCHAR(20) DEFAULT 'Medium',
+        completed BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Todo items table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS todo_items (
+        id SERIAL PRIMARY KEY,
+        todo_list_id INTEGER REFERENCES todo_lists(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        item_type VARCHAR(20) DEFAULT 'bullet', -- 'bullet' or 'numbered'
+        estimated_time INTEGER DEFAULT 0,
+        completed BOOLEAN DEFAULT FALSE,
+        order_index INTEGER DEFAULT 0,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Index for performance
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_notes_user_task ON notes(user_id, task_id);
@@ -317,6 +361,19 @@ const initDatabase = async () => {
     await pool.query(`
       CREATE INDEX IF NOT EXISTS idx_notes_user_phase ON notes(user_id, phase_id);
     `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_journal_user_date ON journal_entries(user_id, entry_date);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_todo_user ON todo_lists(user_id);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_todo_items_list ON todo_items(todo_list_id);
+    `);
+    
     console.log('✅ Database initialized successfully');
   } catch (error) {
     console.error('❌ Error initializing database:', error);
@@ -1071,6 +1128,446 @@ app.get('/api/time-tracking/summary', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching time summary:', error);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// JOURNAL ROUTES
+// =============================================================================
+
+app.get('/api/journal', authenticateToken, async (req, res) => {
+  try {
+    const { date } = req.query;
+    let query = `
+      SELECT * FROM journal_entries 
+      WHERE user_id = $1
+    `;
+    let params = [req.user.userId];
+
+    if (date) {
+      query += ` AND entry_date = $2`;
+      params.push(date);
+    }
+
+    query += ` ORDER BY entry_date DESC, created_at DESC`;
+
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching journal entries:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/journal', authenticateToken, [
+  body('title').trim().isLength({ min: 1 }),
+  body('content').trim().isLength({ min: 1 }),
+  body('entry_date').optional().isISO8601()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { title, content, entry_date } = req.body;
+    const entryDate = entry_date || new Date().toISOString().split('T')[0];
+
+    const result = await pool.query(`
+      INSERT INTO journal_entries (user_id, title, content, entry_date)
+      VALUES ($1, $2, $3, $4)
+      RETURNING *
+    `, [req.user.userId, title, content, entryDate]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating journal entry:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/journal/:id', authenticateToken, [
+  body('title').optional().trim().isLength({ min: 1 }),
+  body('content').optional().trim().isLength({ min: 1 }),
+  body('entry_date').optional().isISO8601()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { title, content, entry_date } = req.body;
+
+    const result = await pool.query(`
+      UPDATE journal_entries 
+      SET title = COALESCE($1, title),
+          content = COALESCE($2, content),
+          entry_date = COALESCE($3, entry_date),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4 AND user_id = $5
+      RETURNING *
+    `, [title, content, entry_date, id, req.user.userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Journal entry not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating journal entry:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/journal/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+      DELETE FROM journal_entries 
+      WHERE id = $1 AND user_id = $2
+      RETURNING *
+    `, [id, req.user.userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Journal entry not found' });
+    }
+
+    res.json({ message: 'Journal entry deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting journal entry:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// TODO LIST ROUTES
+// =============================================================================
+
+app.get('/api/todo-lists', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT tl.*, 
+             json_agg(
+               json_build_object(
+                 'id', ti.id,
+                 'content', ti.content,
+                 'item_type', ti.item_type,
+                 'estimated_time', ti.estimated_time,
+                 'completed', ti.completed,
+                 'order_index', ti.order_index
+               ) ORDER BY ti.order_index
+             ) FILTER (WHERE ti.id IS NOT NULL) as items
+      FROM todo_lists tl
+      LEFT JOIN todo_items ti ON tl.id = ti.todo_list_id
+      WHERE tl.user_id = $1
+      GROUP BY tl.id
+      ORDER BY tl.created_at DESC
+    `, [req.user.userId]);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching todo lists:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/api/todo-lists', authenticateToken, [
+  body('title').trim().isLength({ min: 1 }),
+  body('description').optional().trim(),
+  body('estimated_time').optional().isInt({ min: 0 }),
+  body('priority').optional().isIn(['Low', 'Medium', 'High']),
+  body('items').optional().isArray()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { title, description, estimated_time, priority, items } = req.body;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Create todo list
+      const todoListResult = await client.query(`
+        INSERT INTO todo_lists (user_id, title, description, estimated_time, priority)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *
+      `, [req.user.userId, title, description || '', estimated_time || 0, priority || 'Medium']);
+
+      const todoList = todoListResult.rows[0];
+
+      // Create todo items if provided
+      if (items && items.length > 0) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          await client.query(`
+            INSERT INTO todo_items (todo_list_id, content, item_type, estimated_time, order_index)
+            VALUES ($1, $2, $3, $4, $5)
+          `, [todoList.id, item.content, item.item_type || 'bullet', item.estimated_time || 0, i]);
+        }
+      }
+
+      await client.query('COMMIT');
+
+      // Fetch the complete todo list with items
+      const completeResult = await pool.query(`
+        SELECT tl.*, 
+               json_agg(
+                 json_build_object(
+                   'id', ti.id,
+                   'content', ti.content,
+                   'item_type', ti.item_type,
+                   'estimated_time', ti.estimated_time,
+                   'completed', ti.completed,
+                   'order_index', ti.order_index
+                 ) ORDER BY ti.order_index
+               ) FILTER (WHERE ti.id IS NOT NULL) as items
+        FROM todo_lists tl
+        LEFT JOIN todo_items ti ON tl.id = ti.todo_list_id
+        WHERE tl.id = $1
+        GROUP BY tl.id
+      `, [todoList.id]);
+
+      res.status(201).json(completeResult.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Error creating todo list:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/todo-lists/:id', authenticateToken, [
+  body('title').optional().trim().isLength({ min: 1 }),
+  body('description').optional().trim(),
+  body('estimated_time').optional().isInt({ min: 0 }),
+  body('priority').optional().isIn(['Low', 'Medium', 'High']),
+  body('completed').optional().isBoolean()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { title, description, estimated_time, priority, completed } = req.body;
+
+    const result = await pool.query(`
+      UPDATE todo_lists 
+      SET title = COALESCE($1, title),
+          description = COALESCE($2, description),
+          estimated_time = COALESCE($3, estimated_time),
+          priority = COALESCE($4, priority),
+          completed = COALESCE($5, completed),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $6 AND user_id = $7
+      RETURNING *
+    `, [title, description, estimated_time, priority, completed, id, req.user.userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Todo list not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating todo list:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/todo-lists/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+      DELETE FROM todo_lists 
+      WHERE id = $1 AND user_id = $2
+      RETURNING *
+    `, [id, req.user.userId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Todo list not found' });
+    }
+
+    res.json({ message: 'Todo list deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting todo list:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Todo items routes
+app.post('/api/todo-lists/:id/items', authenticateToken, [
+  body('content').trim().isLength({ min: 1 }),
+  body('item_type').optional().isIn(['bullet', 'numbered']),
+  body('estimated_time').optional().isInt({ min: 0 })
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { content, item_type, estimated_time } = req.body;
+
+    // Get the next order index
+    const orderResult = await pool.query(`
+      SELECT COALESCE(MAX(order_index), -1) + 1 as next_order
+      FROM todo_items 
+      WHERE todo_list_id = $1
+    `, [id]);
+
+    const result = await pool.query(`
+      INSERT INTO todo_items (todo_list_id, content, item_type, estimated_time, order_index)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING *
+    `, [id, content, item_type || 'bullet', estimated_time || 0, orderResult.rows[0].next_order]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating todo item:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.put('/api/todo-items/:id', authenticateToken, [
+  body('content').optional().trim().isLength({ min: 1 }),
+  body('item_type').optional().isIn(['bullet', 'numbered']),
+  body('estimated_time').optional().isInt({ min: 0 }),
+  body('completed').optional().isBoolean()
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { id } = req.params;
+    const { content, item_type, estimated_time, completed } = req.body;
+
+    const result = await pool.query(`
+      UPDATE todo_items 
+      SET content = COALESCE($1, content),
+          item_type = COALESCE($2, item_type),
+          estimated_time = COALESCE($3, estimated_time),
+          completed = COALESCE($4, completed),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
+      RETURNING *
+    `, [content, item_type, estimated_time, completed, id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Todo item not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating todo item:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.delete('/api/todo-items/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+      DELETE FROM todo_items 
+      WHERE id = $1
+      RETURNING *
+    `, [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Todo item not found' });
+    }
+
+    res.json({ message: 'Todo item deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting todo item:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =============================================================================
+// AI TODO OPTIMIZATION ROUTE
+// =============================================================================
+
+app.post('/api/ai/todo-optimization', authenticateToken, async (req, res) => {
+  try {
+    const { todoList, userContext } = req.body;
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: 'AI service not configured' });
+    }
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `You are an AI productivity assistant helping optimize a user's todo list for better time management and efficiency.
+
+Current Todo List:
+${JSON.stringify(todoList, null, 2)}
+
+User Context: ${userContext || 'No additional context provided'}
+
+Please analyze this todo list and provide:
+
+1. **Goal Summary**: A concise summary of what the user is trying to achieve
+2. **Time Management Suggestions**: Specific recommendations for optimizing time allocation
+3. **Priority Optimization**: Suggestions for reordering tasks based on importance and dependencies
+4. **Efficiency Tips**: Ways to complete tasks more efficiently
+5. **Potential Improvements**: Suggestions for breaking down complex tasks or combining simple ones
+
+Format your response as a JSON object with these sections:
+{
+  "goalSummary": "Brief summary of the main objective",
+  "timeManagement": {
+    "suggestions": ["Array of specific time management tips"],
+    "estimatedTotalTime": "Total estimated time in hours",
+    "recommendedSchedule": "Suggested daily/weekly schedule"
+  },
+  "priorityOptimization": {
+    "reorderedTasks": ["Array of task IDs in recommended order"],
+    "reasoning": "Explanation of the priority changes"
+  },
+  "efficiencyTips": ["Array of efficiency suggestions"],
+  "improvements": ["Array of potential improvements"]
+}
+
+Be specific, actionable, and realistic. Focus on practical advice that can be implemented immediately.`
+          }]
+        }]
+      })
+    });
+
+    const result = await response.json();
+    let responseText = result.candidates[0].content.parts[0].text;
+    
+    // Clean up markdown code blocks if present
+    responseText = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    responseText = responseText.replace(/^[^{]*({.*})[^}]*$/s, '$1');
+    
+    const optimizationData = JSON.parse(responseText);
+
+    res.json(optimizationData);
+  } catch (error) {
+    console.error('Error generating todo optimization:', error);
+    res.status(500).json({ error: 'Failed to generate optimization' });
   }
 });
 

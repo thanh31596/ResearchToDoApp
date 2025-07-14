@@ -210,7 +210,86 @@ class ApiService {
         });
     }
 
-    // Export method
+    // Journal methods
+    async getJournalEntries(date) {
+        const params = date ? `?date=${date}` : '';
+        return this.apiCall(`/journal${params}`);
+    }
+
+    async createJournalEntry(entryData) {
+        return this.apiCall('/journal', {
+            method: 'POST',
+            body: JSON.stringify(entryData),
+        });
+    }
+
+    async updateJournalEntry(entryId, updates) {
+        return this.apiCall(`/journal/${entryId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updates),
+        });
+    }
+
+    async deleteJournalEntry(entryId) {
+        return this.apiCall(`/journal/${entryId}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Todo list methods
+    async getTodoLists() {
+        return this.apiCall('/todo-lists');
+    }
+
+    async createTodoList(todoListData) {
+        return this.apiCall('/todo-lists', {
+            method: 'POST',
+            body: JSON.stringify(todoListData),
+        });
+    }
+
+    async updateTodoList(todoListId, updates) {
+        return this.apiCall(`/todo-lists/${todoListId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updates),
+        });
+    }
+
+    async deleteTodoList(todoListId) {
+        return this.apiCall(`/todo-lists/${todoListId}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // Todo item methods
+    async createTodoItem(todoListId, itemData) {
+        return this.apiCall(`/todo-lists/${todoListId}/items`, {
+            method: 'POST',
+            body: JSON.stringify(itemData),
+        });
+    }
+
+    async updateTodoItem(itemId, updates) {
+        return this.apiCall(`/todo-items/${itemId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updates),
+        });
+    }
+
+    async deleteTodoItem(itemId) {
+        return this.apiCall(`/todo-items/${itemId}`, {
+            method: 'DELETE',
+        });
+    }
+
+    // AI Todo optimization
+    async getTodoOptimization(todoList, userContext) {
+        return this.apiCall('/ai/todo-optimization', {
+            method: 'POST',
+            body: JSON.stringify({ todoList, userContext }),
+        });
+    }
+
     async exportData() {
         return this.apiCall('/export');
     }

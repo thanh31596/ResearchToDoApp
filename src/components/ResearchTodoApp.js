@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Target, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame,  LogOut, User, BookOpen,ChevronDown } from 'lucide-react';
+import { Calendar, Clock, TrendingUp, MessageCircle, Plus, CheckCircle, AlertTriangle, Brain, Edit, X, ChevronLeft, ChevronRight, Trash2, Flame,  LogOut, User, BookOpen,ChevronDown } from 'lucide-react';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { NoteIcon, NoteEditor, NotesSidebar } from './Notes/NoteComponents';
+import TodoListWidget from './TodoList/TodoListWidget';
+
 // Add this at the top of your component
 
 const formatDateForInput = (dateString) => {
@@ -139,8 +141,119 @@ const LiquidProgressBar = ({ progress, className = "", colors = "from-purple-500
     </div>
 );
 
-const ResearchTodoApp = () => {
-    const { user, logout } = useAuth();
+    // Journal Component for Sidebar
+    const JournalComponent = () => {
+        const [journalEntries, setJournalEntries] = useState([]);
+        const [loading, setLoading] = useState(true);
+        const [journalTitle, setJournalTitle] = useState('');
+        const [journalContent, setJournalContent] = useState('');
+
+        useEffect(() => {
+            loadJournalEntries();
+        }, []);
+
+        const loadJournalEntries = async () => {
+            try {
+                setLoading(true);
+                const entries = await apiService.getJournalEntries();
+                setJournalEntries(entries);
+            } catch (error) {
+                console.error('Error loading journal entries:', error);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        const createJournalEntry = async () => {
+            if (!journalTitle.trim() || !journalContent.trim()) return;
+
+            try {
+                const newEntry = await apiService.createJournalEntry({
+                    title: journalTitle,
+                    content: journalContent,
+                    entry_date: new Date().toISOString().split('T')[0]
+                });
+
+                setJournalEntries(prev => [newEntry, ...prev]);
+                setJournalTitle('');
+                setJournalContent('');
+            } catch (error) {
+                console.error('Error creating journal entry:', error);
+            }
+        };
+
+        if (loading) {
+            return (
+                <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+                </div>
+            );
+        }
+
+        return (
+            <div className="space-y-4">
+                {/* New Entry Form */}
+                <div className="bg-gray-50 rounded-xl p-4">
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">New Entry</h3>
+                    <div className="space-y-3">
+                        <input
+                            type="text"
+                            value={journalTitle}
+                            onChange={(e) => setJournalTitle(e.target.value)}
+                            placeholder="Entry title..."
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400"
+                        />
+                        <textarea
+                            value={journalContent}
+                            onChange={(e) => setJournalContent(e.target.value)}
+                            placeholder="Write your thoughts, goals, or reflections..."
+                            rows={4}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-400 resize-none"
+                        />
+                        <button
+                            onClick={createJournalEntry}
+                            className="w-full bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:shadow-lg transform hover:scale-105 transition-all duration-300"
+                        >
+                            Save Entry
+                        </button>
+                    </div>
+                </div>
+
+                {/* Journal Entries */}
+                <div>
+                    <h3 className="text-lg font-semibold text-gray-800 mb-3">Recent Entries</h3>
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                        {journalEntries.map(entry => (
+                            <div
+                                key={entry.id}
+                                className="p-4 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-all duration-300"
+                            >
+                                <h4 className="font-medium text-gray-800 mb-1">{entry.title}</h4>
+                                <p className="text-sm text-gray-600 mb-2 line-clamp-3">
+                                    {entry.content}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                    {new Date(entry.entry_date).toLocaleDateString()}
+                                </p>
+                            </div>
+                        ))}
+                        {journalEntries.length === 0 && (
+                            <div className="text-center py-8 text-gray-500">
+                                <BookOpen className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                                <p>No journal entries yet</p>
+                                <p className="text-sm">Start writing to track your thoughts and progress</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+
+
+    const ResearchTodoApp = () => {
+        const { user, logout } = useAuth();
     const [currentView, setCurrentView] = useState('daily');
     const [showCreateTask, setShowCreateTask] = useState(false);
     const [newTaskInput, setNewTaskInput] = useState('');
@@ -170,7 +283,10 @@ const ResearchTodoApp = () => {
     const [notes, setNotes] = useState([]);
     const [editingNote, setEditingNote] = useState(null);
     const [showNotesSidebar, setShowNotesSidebar] = useState(false);
+    const [showJournalSidebar, setShowJournalSidebar] = useState(false);
+
     const [noteTarget, setNoteTarget] = useState(null);
+
     const [chatMessages, setChatMessages] = useState([
         { role: 'assistant', content: 'Hello! I\'m your AI research assistant. I can help you create detailed project plans. Try describing a research task or project you\'d like to work on!' }
     ]);
@@ -570,6 +686,8 @@ const ResearchTodoApp = () => {
             setNotifications(prev => prev.filter(n => n.id !== id));
         }, 4000);
     };
+
+
 
     // Create task using backend
     const handleCreateTaskSubmit = async () => {
@@ -1419,32 +1537,15 @@ Respond with a helpful message (not JSON this time).`
                                     </button>
                                 </div>
                             )}
-                            <button
-                                onClick={openNotesSidebar}
-                                className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-4 md:px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-blue-600 hover:to-indigo-700"
-                                title="View all notes"
-                            >
-                                <BookOpen className="w-5 h-5" />
-                                <span className="hidden md:inline">Notes</span>
-                                {notes.length > 0 && (
-                                    <span className="bg-white/20 text-xs px-2 py-1 rounded-full">
-                                  {notes.length}
-                                </span>
-                                )}
-                            </button>
-                            <button
-                                onClick={() => setShowCreateTask(true)}
-                                className="bg-gradient-to-r from-purple-500 to-pink-500 text-white px-4 md:px-6 py-3 rounded-2xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-purple-600 hover:to-pink-600"
-                            >
-                                <Plus className="w-5 h-5" />
-                                <span className="hidden md:inline">Create Task</span>
-                            </button>
+
+
 
                             <nav className="flex space-x-1 bg-white/70 backdrop-blur-sm rounded-2xl p-1 shadow-lg border border-white/30 overflow-x-auto md:overflow-visible">
                                 {[
                                     { key: 'daily', label: 'Daily', icon: Clock },
                                     { key: 'calendar', label: 'Calendar', icon: Calendar },
-                                    { key: 'analytics', label: 'Analytics', icon: TrendingUp }
+                                    { key: 'analytics', label: 'Analytics', icon: TrendingUp },
+                                    { key: 'todo', label: 'Todo', icon: TrendingUp }
                                 ].map(({ key, label, icon: Icon }) => (
                                     <button
                                         key={key}
@@ -1460,6 +1561,34 @@ Respond with a helpful message (not JSON this time).`
                                     </button>
                                 ))}
                             </nav>
+
+                            {/* Notes and Journal Buttons */}
+                            <div className="flex space-x-2">
+                                <button
+                                    onClick={openNotesSidebar}
+                                    className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white px-3 md:px-4 py-2 rounded-xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-blue-600 hover:to-indigo-700"
+                                    title="View all notes"
+                                >
+                                    <BookOpen className="w-4 h-4" />
+                                    <span className="font-medium hidden md:inline">Notes</span>
+                                    {notes.length > 0 && (
+                                        <span className="bg-white/20 text-xs px-2 py-1 rounded-full">
+                                            {notes.length}
+                                        </span>
+                                    )}
+                                </button>
+
+                                <button
+                                    onClick={() => setShowJournalSidebar(true)}
+                                    className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-3 md:px-4 py-2 rounded-xl font-medium hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center space-x-2 hover:from-green-600 hover:to-emerald-700"
+                                    title="Open journal"
+                                >
+                                    <BookOpen className="w-4 h-4" />
+                                    <span className="font-medium hidden md:inline">Journal</span>
+                                </button>
+                            </div>
+
+
 
                             {/* User Menu */}
                             <div className="relative user-menu-container">
@@ -1484,6 +1613,7 @@ Respond with a helpful message (not JSON this time).`
                                             </p>
                                             <p className="text-xs text-gray-500">{user?.email}</p>
                                         </div>
+
                                         <button
                                             onClick={() => {
                                                 // Clear timer if running
@@ -2300,6 +2430,12 @@ Respond with a helpful message (not JSON this time).`
                     </div>
                 )}
 
+                {currentView === 'todo' && (
+                    <div className="space-y-8">
+                        <TodoListWidget />
+                    </div>
+                )}
+
                 {/*{currentView === 'projects' && (*/}
                 {/*    <div className="space-y-8">*/}
                 {/*        /!* Enhanced Gantt Chart *!/*/}
@@ -2458,7 +2594,7 @@ Respond with a helpful message (not JSON this time).`
                                 {
                                     title: 'Active Projects',
                                     value: tickets.length,
-                                    icon: Target,
+                                    icon: TrendingUp,
                                     gradient: 'from-blue-500 to-indigo-600',
                                     bg: 'from-blue-50 to-indigo-100'
                                 },
@@ -2548,7 +2684,7 @@ Respond with a helpful message (not JSON this time).`
                                 </div>
                             ) : (
                                 <div className="text-center py-12 text-gray-500">
-                                    <Target className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                                    <TrendingUp className="w-16 h-16 mx-auto mb-4 text-gray-300" />
                                     <p className="text-lg">No projects to display in timeline</p>
                                 </div>
                             )}
@@ -2899,7 +3035,7 @@ Respond with a helpful message (not JSON this time).`
                                     {
                                         title: 'Focus Mode',
                                         description: 'Hide completed tasks and show only urgent items',
-                                        icon: Target,
+                                        icon: TrendingUp,
                                         gradient: 'from-purple-500 to-indigo-600',
                                         action: () => addNotification('🎯 Focus mode activated! Showing only urgent tasks.', 'info')
                                     },
@@ -3544,6 +3680,32 @@ Respond with a helpful message (not JSON this time).`
                 }}
                 onExport={handleNoteExport}
             />
+
+            {/* Journal Sidebar */}
+            {showJournalSidebar && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50">
+                    <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white/90 backdrop-blur-lg shadow-2xl border-l border-white/30 transform transition-transform duration-300 ease-out">
+                        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                            <h2 className="text-2xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                                Journal
+                            </h2>
+                            <button
+                                onClick={() => setShowJournalSidebar(false)}
+                                className="text-gray-400 hover:text-gray-600 transform hover:scale-110 transition-all"
+                            >
+                                <X className="w-6 h-6" />
+                            </button>
+                        </div>
+                        <div className="p-6 overflow-y-auto h-full">
+                            <JournalComponent />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+
+
+
             <style>{`
                 @keyframes float {
                     0%, 100% { transform: translateY(0px) rotate(0deg); }
